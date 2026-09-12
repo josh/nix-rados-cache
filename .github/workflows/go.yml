@@ -1,0 +1,43 @@
+name: Go
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ceph-release: squid
+            runner: ubuntu-24.04
+          - ceph-release: tentacle
+            runner: ubuntu-26.04
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ceph-mon ceph-osd librados-dev
+
+      - name: Print Ceph version
+        run: ceph --version
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: |
+          go build
+
+      - name: Test
+        timeout-minutes: 25
+        run: |
+          go test -timeout 20m
