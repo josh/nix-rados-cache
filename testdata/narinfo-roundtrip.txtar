@@ -1,0 +1,33 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null --head http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
+stdout '^404$'
+
+exec curl --silent --write-out '%{http_code}' --upload-file hello.narinfo http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
+stdout '^201$'
+
+exec curl --silent --head http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
+stdout 'HTTP/1.1 200'
+stdout 'Content-Type: text/x-nix-narinfo'
+
+exec curl --silent --fail --output downloaded.narinfo http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
+cmp hello.narinfo downloaded.narinfo
+
+rados-object-count g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
+stdout '^1$'
+
+kill server
+
+-- hello.narinfo --
+StorePath: /nix/store/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2-hello
+URL: nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz
+Compression: xz
+FileHash: sha256:1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1
+FileSize: 1048576
+NarHash: sha256:0cs3ahgi5k4vyj9j9jmrx3kb8z5q5b7dh7xz6qfn6v8jvfxjq8y2
+NarSize: 2048
+References: 

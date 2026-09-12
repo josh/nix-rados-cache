@@ -1,0 +1,23 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+bin-file payload.nar.xz 1048576
+
+exec curl --silent --write-out '%{http_code}' --upload-file payload.nar.xz http://127.0.0.1:$PORT/nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz
+stdout '^201$'
+
+exec curl --silent --head http://127.0.0.1:$PORT/nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz
+stdout 'HTTP/1.1 200'
+stdout 'Content-Length: 1048576'
+stdout 'Content-Type: application/x-nix-nar'
+
+exec curl --silent --fail --output downloaded.nar.xz http://127.0.0.1:$PORT/nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz
+bin-cmp payload.nar.xz downloaded.nar.xz
+
+rados-object-count nar/
+stdout '^1$'
+
+kill server

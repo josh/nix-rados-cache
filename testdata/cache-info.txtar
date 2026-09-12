@@ -1,0 +1,18 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec curl --silent --fail --output cache-info http://127.0.0.1:$PORT/nix-cache-info
+cmp cache-info want-cache-info
+
+exec curl --silent --head http://127.0.0.1:$PORT/nix-cache-info
+stdout 'Content-Type: text/x-nix-cache-info'
+
+kill server
+
+-- want-cache-info --
+StoreDir: /nix/store
+WantMassQuery: 1
+Priority: 40
