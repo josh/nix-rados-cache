@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	mathrand "math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -164,7 +165,7 @@ func cmdCreatePool(ts *testscript.TestScript, neg bool, args []string) {
 	poolType := ts.Getenv("DEFAULT_POOL_TYPE")
 	confPath := ts.Getenv("CEPH_CONF")
 
-	poolName := fmt.Sprintf("test-%d", time.Now().UnixNano())
+	poolName := fmt.Sprintf("test-%x", mathrand.Uint64())
 
 	const maxAttempts = 3
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
