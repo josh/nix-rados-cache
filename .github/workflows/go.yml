@@ -6,6 +6,7 @@ on:
 
 jobs:
   test:
+    name: test (${{ matrix.ceph-release }})
     strategy:
       fail-fast: false
       matrix:
