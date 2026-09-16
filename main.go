@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
@@ -40,6 +41,13 @@ func main() {
 		slog.Error("failed to open pool", "error", err)
 		os.Exit(1)
 	}
+
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt)
+		<-c
+		os.Exit(0)
+	}()
 
 	slog.Info("listening", "address", *listen, "pool", *pool)
 	if err := http.ListenAndServe(*listen, newHandler(ioctx)); err != nil {

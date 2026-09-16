@@ -1,0 +1,13 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+bin-file big.nar.xz 16777217
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file big.nar.xz http://127.0.0.1:$PORT/nar/big.nar.xz
+stdout '^413$'
+
+rados-object-count ''
+stdout '^0$'

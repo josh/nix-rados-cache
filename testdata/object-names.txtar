@@ -1,0 +1,26 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null http://127.0.0.1:$PORT/foo
+stdout '^404$'
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file body http://127.0.0.1:$PORT/foo
+stdout '^404$'
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null http://127.0.0.1:$PORT/a%20b.narinfo
+stdout '^404$'
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file body http://127.0.0.1:$PORT/nar/a%20b
+stdout '^404$'
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null http://127.0.0.1:$PORT/
+stdout '^404$'
+
+rados-object-count ''
+stdout '^0$'
+
+-- body --
+rejected

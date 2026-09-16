@@ -23,8 +23,6 @@ exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/9sc0rba
 rados-object-count ''
 stdout '^2$'
 
-kill server
-
 -- fixture/hello.txt --
 hello from nix-rados-cache
 -- fixture/bin/greet --
