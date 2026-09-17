@@ -24,10 +24,7 @@ const (
 	accessCountXattr = "access_count"
 )
 
-var (
-	objectNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-	errObjectExists   = errors.New("object exists")
-)
+var objectNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8080", "TCP address to listen on")
@@ -114,11 +111,7 @@ func putObject(ioctx *rados.IOContext, name string, data []byte, calls *int) err
 	op.Create(rados.CreateExclusive)
 	op.WriteFull(data)
 	*calls++
-	err := op.Operate(ioctx, name, rados.OperationNoFlag)
-	if errors.Is(err, rados.ErrObjectExists) {
-		return errObjectExists
-	}
-	return err
+	return op.Operate(ioctx, name, rados.OperationNoFlag)
 }
 
 func countAccess(ioctx *rados.IOContext, name string, calls *int) (uint64, error) {
@@ -254,7 +247,7 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 	}
 	err = putObject(h.ioctx, name, data, &stats(r).radosCalls)
 	switch {
-	case errors.Is(err, errObjectExists):
+	case errors.Is(err, rados.ErrObjectExists):
 		w.WriteHeader(http.StatusOK)
 	case err != nil:
 		writeStoreError(w, name, err)
