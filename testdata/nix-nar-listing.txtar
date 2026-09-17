@@ -1,0 +1,24 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix store add-path --store $WORK/store1 --name hello fixture
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?write-nar-listing=true /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+rados-object-count 9sc0rbaa4s1snb6bjs4qz47qalf50p4v.ls
+stdout '^1$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL get 9sc0rbaa4s1snb6bjs4qz47qalf50p4v.ls -
+stdout '"hello.txt"'
+
+exec nix store ls --store http://127.0.0.1:$PORT -R -l /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+stdout '27 ./hello.txt'
+
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+cmp fixture/hello.txt $WORK/store2/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello/hello.txt
+
+-- fixture/hello.txt --
+hello from nix-rados-cache
+-- fixture/bin/greet --
+#!/bin/sh
+echo hi

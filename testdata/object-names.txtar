@@ -23,5 +23,17 @@ stdout '^404$'
 rados-object-count ''
 stdout '^0$'
 
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file body http://127.0.0.1:$PORT/log/abc123-hello.drv
+stdout '^201$'
+exec curl --silent --fail --output log.out http://127.0.0.1:$PORT/log/abc123-hello.drv
+cmp body log.out
+rados-object-count log/
+stdout '^1$'
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file body http://127.0.0.1:$PORT/abc123.ls
+stdout '^201$'
+exec curl --silent --fail --output ls.out http://127.0.0.1:$PORT/abc123.ls
+cmp body ls.out
+
 -- body --
 rejected

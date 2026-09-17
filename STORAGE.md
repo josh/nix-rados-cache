@@ -13,17 +13,21 @@ A cache is a single RADOS pool, using the default namespace. Object names carry 
 | Nix cache path       | RADOS objects                                                        |
 |----------------------|----------------------------------------------------------------------|
 | `<hash>.narinfo`     | `<hash>.narinfo`                                                     |
+| `<hash>.ls`          | `<hash>.ls`                                                          |
+| `log/<drv>`          | `log/<drv>`                                                          |
 | `nar/<name>`         | `nar/<name>.0000000000000000`, `nar/<name>.0000000000000001`, …      |
 
-`<hash>` and `<name>` consist only of `A-Z a-z 0-9 . _ -`. RADOS names are flat; the `/` in `nar/` is an ordinary character. NAR names are whatever the client uploads, typically `<filehash>.nar.xz` or `<filehash>.nar`.
+`<hash>`, `<drv>` and `<name>` consist only of `A-Z a-z 0-9 . _ -`. RADOS names are flat; the `/` in `nar/` is an ordinary character. NAR names are whatever the client uploads, typically `<filehash>.nar.xz` or `<filehash>.nar`.
 
 `nix-cache-info` is never stored: the server synthesizes it on GET and discards it on PUT. Its absence says nothing about whether the cache exists.
 
 A name that does not match one of these shapes is foreign. The server never reads or deletes foreign objects.
 
-## Narinfo objects
+## Plain objects
 
-A narinfo is one object holding the file's bytes verbatim, created exclusively in a single operation. A later PUT of the same name changes nothing except that its `Sig:` lines not already present are appended, so signatures accumulate and are never removed or reordered; every other field keeps the bytes from the first upload. It has no omap and at most one xattr, `access_count`. Maximum size is 16 MiB.
+A narinfo, a NAR listing (`.ls`, written by Nix when `write-nar-listing` is on) and a build log (`log/<drv>`, written by `nix store copy-log`) are each one object holding the file's bytes verbatim, created exclusively in a single operation. It has no omap and at most one xattr, `access_count`. Maximum size is 16 MiB.
+
+A later PUT of a narinfo changes nothing except that its `Sig:` lines not already present are appended, so signatures accumulate and are never removed or reordered; every other field keeps the bytes from the first upload. A later PUT of a listing or log changes nothing.
 
 ## NAR objects
 
@@ -63,4 +67,5 @@ rados -p nixcache --striper get 'nar/<name>' nar.xz
 rados -p nixcache getxattr 'nar/<name>.0000000000000000' striper.size
 rados -p nixcache getxattr 'nar/<name>.0000000000000000' access_count
 rados -p nixcache get '<hash>.narinfo' - | head
+rados -p nixcache get '<hash>.ls' -
 ```

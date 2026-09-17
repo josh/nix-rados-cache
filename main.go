@@ -213,6 +213,8 @@ func newHandler(ioctx *rados.IOContext, stripeSize int) http.Handler {
 	mux.HandleFunc("PUT /nix-cache-info", h.putCacheInfo)
 	mux.HandleFunc("GET /nar/{name}", h.getObject)
 	mux.HandleFunc("PUT /nar/{name}", h.putObject)
+	mux.HandleFunc("GET /log/{name}", h.getObject)
+	mux.HandleFunc("PUT /log/{name}", h.putObject)
 	mux.HandleFunc("GET /{name}", h.getObject)
 	mux.HandleFunc("PUT /{name}", h.putObject)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -276,7 +278,10 @@ func objectName(r *http.Request) (string, bool) {
 	if strings.HasPrefix(r.URL.Path, "/nar/") {
 		return "nar/" + name, true
 	}
-	return name, strings.HasSuffix(name, ".narinfo")
+	if strings.HasPrefix(r.URL.Path, "/log/") {
+		return "log/" + name, true
+	}
+	return name, strings.HasSuffix(name, ".narinfo") || strings.HasSuffix(name, ".ls")
 }
 
 func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
@@ -304,7 +309,14 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 		}
 		s.accessCount = count
 	}
-	w.Header().Set("Content-Type", "text/x-nix-narinfo")
+	contentType := "text/x-nix-narinfo"
+	switch {
+	case strings.HasSuffix(name, ".ls"):
+		contentType = "application/json"
+	case strings.HasPrefix(name, "log/"):
+		contentType = "text/plain"
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
@@ -369,7 +381,10 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "object too large", http.StatusRequestEntityTooLarge)
 			return
 		}
-		sigs := sigLines(data)
+		var sigs []string
+		if strings.HasSuffix(name, ".narinfo") {
+			sigs = sigLines(data)
+		}
 		if slices.ContainsFunc(sigs, func(s string) bool { return !sigLinePattern.MatchString(s) }) {
 			http.Error(w, "malformed Sig line", http.StatusBadRequest)
 			return
