@@ -450,6 +450,8 @@ mon_allow_pool_delete = true
 [osd]
 osd_data = %[3]s/osd/ceph-$id
 osd_objectstore = memstore
+osd_class_update_on_start = false
+osd_crush_update_on_start = false
 `
 
 func startDaemon(t *testing.T, ctx context.Context, out io.Writer, args ...string) error {
@@ -481,6 +483,9 @@ func startCephOsd(t *testing.T, ctx context.Context, confPath string, out io.Wri
 		if err != nil {
 			return fmt.Errorf("failed to generate OSD %d uuid: %w", i, err)
 		}
+		if err := runCeph(ctx, confPath, "osd", "new", osdUUID, osdID); err != nil {
+			return err
+		}
 		mkfs := exec.CommandContext(ctx, "ceph-osd", "--conf", confPath, "--id", osdID, "--mkfs", "--osd-uuid", osdUUID)
 		mkfs.Stdout = out
 		mkfs.Stderr = out
@@ -491,7 +496,15 @@ func startCephOsd(t *testing.T, ctx context.Context, confPath string, out io.Wri
 			return err
 		}
 	}
-	return waitForCeph(ctx, confPath, func(status cephStatus) bool { return status.Osdmap.NumUpOsds >= 3 })
+	if err := waitForCeph(ctx, confPath, func(status cephStatus) bool { return status.Osdmap.NumUpOsds >= 3 }); err != nil {
+		return err
+	}
+	for i := 0; i < 3; i++ {
+		if err := runCeph(ctx, confPath, "osd", "crush", "create-or-move", "osd."+strconv.Itoa(i), "1.0", "root=default", "host=localhost"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func waitForCeph(ctx context.Context, confPath string, ready func(cephStatus) bool) error {
