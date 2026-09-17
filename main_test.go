@@ -97,7 +97,7 @@ func TestScript(t *testing.T) {
 					env.Setenv("HOME", home)
 					env.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 					env.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
-					env.Setenv("NIX_CONFIG", "experimental-features = nix-command\nnarinfo-cache-negative-ttl = 0\n")
+					env.Setenv("NIX_CONFIG", "experimental-features = nix-command\nnarinfo-cache-negative-ttl = 0\nnarinfo-cache-positive-ttl = 0\n")
 
 					port, err := getFreePort()
 					if err != nil {

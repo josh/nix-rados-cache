@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	cacheInfo     = "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n"
-	maxObjectSize = 16 * 1024 * 1024
+	cacheInfo        = "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n"
+	maxObjectSize    = 16 * 1024 * 1024
+	accessCountXattr = "access_count"
 )
 
 var (
@@ -120,6 +121,15 @@ func putObject(ioctx *rados.IOContext, name string, data []byte, calls *int) err
 	return err
 }
 
+func countAccess(ioctx *rados.IOContext, name string, calls *int) (uint64, error) {
+	*calls++
+	xattrs, _ := ioctx.ListXattrs(name)
+	count, _ := strconv.ParseUint(string(xattrs[accessCountXattr]), 10, 64)
+	count++
+	*calls++
+	return count, ioctx.SetXattr(name, accessCountXattr, []byte(strconv.FormatUint(count, 10)))
+}
+
 type handler struct {
 	ioctx *rados.IOContext
 }
@@ -136,17 +146,26 @@ func newHandler(ioctx *rados.IOContext) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		var calls int
-		mux.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), ctxKey{}, &calls)))
-		slog.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start),
-			"req_bytes", r.ContentLength, "resp_bytes", sw.bytes, "rados_calls", calls)
+		var s reqStats
+		mux.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), ctxKey{}, &s)))
+		attrs := []any{"method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start),
+			"req_bytes", r.ContentLength, "resp_bytes", sw.bytes, "rados_calls", s.radosCalls}
+		if s.accessCount > 0 {
+			attrs = append(attrs, "access_count", s.accessCount)
+		}
+		slog.Info("request", attrs...)
 	})
 }
 
 type ctxKey struct{}
 
-func radosCalls(r *http.Request) *int {
-	return r.Context().Value(ctxKey{}).(*int)
+type reqStats struct {
+	radosCalls  int
+	accessCount uint64
+}
+
+func stats(r *http.Request) *reqStats {
+	return r.Context().Value(ctxKey{}).(*reqStats)
 }
 
 type statusWriter struct {
@@ -197,10 +216,18 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data, err := getObject(h.ioctx, name, radosCalls(r))
+	data, err := getObject(h.ioctx, name, &stats(r).radosCalls)
 	if err != nil {
 		writeStoreError(w, name, err)
 		return
+	}
+	if r.Method == http.MethodGet {
+		s := stats(r)
+		count, err := countAccess(h.ioctx, name, &s.radosCalls)
+		if err != nil {
+			slog.Error("access count", "object", name, "error", err)
+		}
+		s.accessCount = count
 	}
 	contentType := "text/x-nix-narinfo"
 	if strings.HasPrefix(name, "nar/") {
@@ -229,7 +256,7 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "object too large", http.StatusRequestEntityTooLarge)
 		return
 	}
-	err = putObject(h.ioctx, name, data, radosCalls(r))
+	err = putObject(h.ioctx, name, data, &stats(r).radosCalls)
 	switch {
 	case errors.Is(err, errObjectExists):
 		w.WriteHeader(http.StatusOK)

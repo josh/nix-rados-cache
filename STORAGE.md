@@ -23,7 +23,9 @@ A name that does not match one of these shapes is foreign. The server never read
 
 ## Plain objects
 
-Every object holds the file's bytes verbatim. It has no xattrs and no omap.
+Every object holds the file's bytes verbatim. It has no omap and at most one xattr, `access_count`.
+
+`access_count` is a decimal ASCII count of successful GET requests for the object. It is absent until the first GET, and an absent xattr means zero. HEAD and PUT never touch it. It is best-effort: concurrent reads of one object can lose increments. A NAR's count is its downloads. A narinfo's count is queries: Nix GETs a narinfo several times per download and once more when pushing a path that already exists.
 
 - Created exclusively in a single operation: an existing object is never overwritten. A duplicate upload leaves the stored bytes untouched.
 - Maximum size is 16 MiB; larger uploads are refused. There is no striping.
@@ -38,12 +40,13 @@ An alternative implementation must:
 
 - name objects exactly as in *Object names* and add no prefix
 - never overwrite an existing object; create exclusively
-- store file bytes verbatim, with no xattrs or omap
+- store file bytes verbatim, with no omap and no xattrs other than `access_count`
 - ignore names it does not recognise
+- treat a missing `access_count` as zero; it may leave the xattr untouched
 
 It must not:
 
-- store metadata in omap, in a manifest object, or in xattrs
+- store metadata in omap, in a manifest object, or in xattrs other than `access_count`
 - rely on a cache marker object; there is none
 - store `nix-cache-info` as an object
 
@@ -54,6 +57,7 @@ Substitute the cache's pool.
 ```sh
 rados -p nixcache ls
 rados -p nixcache stat 'nar/<name>'
+rados -p nixcache getxattr 'nar/<name>' access_count
 rados -p nixcache get '<hash>.narinfo' - | head
 rados -p nixcache get 'nar/<name>' nar.xz
 ```

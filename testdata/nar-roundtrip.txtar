@@ -19,6 +19,8 @@ stdout 'Content-Type: application/x-nix-nar'
 
 exec curl --silent --fail --output downloaded.nar.xz http://127.0.0.1:$PORT/nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz
 bin-cmp payload.nar.xz downloaded.nar.xz
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz access_count
+stdout '^1$'
 
 rados-object-count nar/
 stdout '^1$'

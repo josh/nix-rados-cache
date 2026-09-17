@@ -13,10 +13,15 @@ rados-object-count nar/
 stdout '^1$'
 rados-object-count ''
 stdout '^2$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL listxattr 9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo
+! stdout .
 
 exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
 cmp fixture/hello.txt $WORK/store2/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello/hello.txt
 cmp fixture/bin/greet $WORK/store2/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello/bin/greet
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr 9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo access_count
+stdout '^[1-9][0-9]*$'
+wait4log 'msg=request method=GET path=/nar/[^ ]+ status=200 .* access_count=1' server.log
 
 exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
 

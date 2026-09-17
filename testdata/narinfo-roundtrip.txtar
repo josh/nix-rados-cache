@@ -19,7 +19,7 @@ stdout 'Content-Type: text/x-nix-narinfo'
 
 exec curl --silent --fail --output downloaded.narinfo http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
 cmp hello.narinfo downloaded.narinfo
-wait4log 'msg=request method=GET path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo status=200 .* resp_bytes=[0-9]+ rados_calls=2' server.log
+wait4log 'msg=request method=GET path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo status=200 .* resp_bytes=[0-9]+ rados_calls=4 access_count=1' server.log
 
 rados-object-count g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
 stdout '^1$'
@@ -30,6 +30,9 @@ wait4log 'msg=request method=PUT path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo 
 
 exec curl --silent --fail --output redownloaded.narinfo http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
 cmp hello.narinfo redownloaded.narinfo
+wait4log 'msg=request method=GET path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo status=200 .* rados_calls=4 access_count=2' server.log
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo access_count
+stdout '^2$'
 
 rados-object-count g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
 stdout '^1$'
