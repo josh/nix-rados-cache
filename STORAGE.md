@@ -53,23 +53,6 @@ Stripes 1 and up are written first, each as one full-object write. Stripe 0 is w
 
 The server stores and verifies no checksums. Nix clients verify NARs against the hashes and signatures in the corresponding narinfo.
 
-## Compatibility checklist
-
-An alternative implementation must:
-
-- name objects exactly as in *Object names* and add no prefix
-- write NARs in the stripe layout above, stripe 0 last and exclusively
-- never modify a narinfo except by appending `Sig:` lines; never overwrite a stripe 0
-- store file bytes verbatim, with no omap and no xattrs other than those listed
-- ignore names it does not recognise
-- treat a missing `access_count` as zero; it may leave the xattr untouched
-
-It must not:
-
-- store metadata in omap, in a manifest object, or in xattrs other than those listed
-- rely on a cache marker object; there is none
-- store `nix-cache-info` as an object
-
 ## Inspecting with the rados CLI
 
 Substitute the cache's pool.
