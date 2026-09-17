@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -91,12 +92,14 @@ func openPool(pool string) (*rados.IOContext, error) {
 	return ioctx, nil
 }
 
-func getObject(ioctx *rados.IOContext, name string) ([]byte, error) {
+func getObject(ioctx *rados.IOContext, name string, calls *int) ([]byte, error) {
+	*calls++
 	stat, err := ioctx.Stat(name)
 	if err != nil {
 		return nil, err
 	}
 	data := make([]byte, stat.Size)
+	*calls++
 	n, err := ioctx.Read(name, data, 0)
 	if err != nil {
 		return nil, err
@@ -104,11 +107,12 @@ func getObject(ioctx *rados.IOContext, name string) ([]byte, error) {
 	return data[:n], nil
 }
 
-func putObject(ioctx *rados.IOContext, name string, data []byte) error {
+func putObject(ioctx *rados.IOContext, name string, data []byte, calls *int) error {
 	op := rados.CreateWriteOp()
 	defer op.Release()
 	op.Create(rados.CreateExclusive)
 	op.WriteFull(data)
+	*calls++
 	err := op.Operate(ioctx, name, rados.OperationNoFlag)
 	if errors.Is(err, rados.ErrObjectExists) {
 		return errObjectExists
@@ -132,19 +136,34 @@ func newHandler(ioctx *rados.IOContext) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		mux.ServeHTTP(sw, r)
-		slog.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start))
+		var calls int
+		mux.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), ctxKey{}, &calls)))
+		slog.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start),
+			"req_bytes", r.ContentLength, "resp_bytes", sw.bytes, "rados_calls", calls)
 	})
+}
+
+type ctxKey struct{}
+
+func radosCalls(r *http.Request) *int {
+	return r.Context().Value(ctxKey{}).(*int)
 }
 
 type statusWriter struct {
 	http.ResponseWriter
 	status int
+	bytes  int
 }
 
 func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusWriter) Write(p []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(p)
+	w.bytes += n
+	return n, err
 }
 
 func (h *handler) getCacheInfo(w http.ResponseWriter, r *http.Request) {
@@ -178,7 +197,7 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data, err := getObject(h.ioctx, name)
+	data, err := getObject(h.ioctx, name, radosCalls(r))
 	if err != nil {
 		writeStoreError(w, name, err)
 		return
@@ -210,7 +229,7 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "object too large", http.StatusRequestEntityTooLarge)
 		return
 	}
-	err = putObject(h.ioctx, name, data)
+	err = putObject(h.ioctx, name, data, radosCalls(r))
 	switch {
 	case errors.Is(err, errObjectExists):
 		w.WriteHeader(http.StatusOK)

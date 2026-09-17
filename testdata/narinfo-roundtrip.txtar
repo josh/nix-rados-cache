@@ -7,11 +7,11 @@ wait4log 'level=INFO msg=listening address=127.0.0.1:[0-9]+ pool=test-[0-9a-f]+'
 
 exec curl --silent --write-out '%{http_code}' --output /dev/null --head http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
 stdout '^404$'
-wait4log 'msg=request method=HEAD path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo status=404 duration=' server.log
+wait4log 'msg=request method=HEAD path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo status=404 .* rados_calls=1' server.log
 
 exec curl --silent --write-out '%{http_code}' --upload-file hello.narinfo http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
 stdout '^201$'
-wait4log 'msg=request method=PUT path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo status=201' server.log
+wait4log 'msg=request method=PUT path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo status=201 .* req_bytes=[0-9]+ resp_bytes=0 rados_calls=1' server.log
 
 exec curl --silent --head http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
 stdout 'HTTP/1.1 200'
@@ -19,13 +19,14 @@ stdout 'Content-Type: text/x-nix-narinfo'
 
 exec curl --silent --fail --output downloaded.narinfo http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
 cmp hello.narinfo downloaded.narinfo
+wait4log 'msg=request method=GET path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo status=200 .* resp_bytes=[0-9]+ rados_calls=2' server.log
 
 rados-object-count g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
 stdout '^1$'
 
 exec curl --silent --write-out '%{http_code}' --upload-file other.narinfo http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
 stdout '^200$'
-wait4log 'msg=request method=PUT path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo status=200' server.log
+wait4log 'msg=request method=PUT path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo status=200 .* rados_calls=1' server.log
 
 exec curl --silent --fail --output redownloaded.narinfo http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
 cmp hello.narinfo redownloaded.narinfo

@@ -6,12 +6,14 @@ wait4http http://127.0.0.1:$PORT/nix-cache-info
 
 exec curl --silent --fail --output cache-info http://127.0.0.1:$PORT/nix-cache-info
 cmp cache-info want-cache-info
+wait4log 'msg=request method=GET path=/nix-cache-info status=200 .* resp_bytes=51 rados_calls=0' server.log
 
 exec curl --silent --head http://127.0.0.1:$PORT/nix-cache-info
 stdout 'Content-Type: text/x-nix-cache-info'
 
 exec curl --silent --write-out '%{http_code}' --upload-file cache-info http://127.0.0.1:$PORT/nix-cache-info
 stdout '^200$'
+wait4log 'msg=request method=PUT path=/nix-cache-info status=200 .* rados_calls=0' server.log
 
 rados-object-count ''
 stdout '^0$'
