@@ -39,6 +39,7 @@ func main() {
 	listen := flag.String("listen", "127.0.0.1:8080", "TCP address to listen on")
 	pool := flag.String("pool", "", "RADOS pool name")
 	stripeSize := flag.Int("stripe-size", 16*1024*1024, "bytes per RADOS object for NARs")
+	caDerivations := flag.Bool("ca-derivations", false, "store realisations of content-addressed derivations")
 	logFile := flag.String("log-file", "", "append logs to this file instead of stderr")
 	flag.Parse()
 
@@ -76,8 +77,8 @@ func main() {
 		os.Exit(0)
 	}()
 
-	slog.Info("listening", "address", *listen, "pool", *pool, "stripe_size", *stripeSize)
-	if err := http.ListenAndServe(*listen, newHandler(ioctx, *stripeSize)); err != nil {
+	slog.Info("listening", "address", *listen, "pool", *pool, "stripe_size", *stripeSize, "ca_derivations", *caDerivations)
+	if err := http.ListenAndServe(*listen, newHandler(ioctx, *stripeSize, *caDerivations)); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
 	}
@@ -218,9 +219,13 @@ type handler struct {
 	stripeSize int
 }
 
-func newHandler(ioctx *rados.IOContext, stripeSize int) http.Handler {
+func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool) http.Handler {
 	h := &handler{ioctx: ioctx, stripeSize: stripeSize}
 	mux := http.NewServeMux()
+	if caDerivations {
+		mux.HandleFunc("GET /build-trace-v2/{drv}/{output}", h.getObject)
+		mux.HandleFunc("PUT /build-trace-v2/{drv}/{output}", h.putObject)
+	}
 	mux.HandleFunc("GET /nix-cache-info", h.getCacheInfo)
 	mux.HandleFunc("PUT /nix-cache-info", h.putCacheInfo)
 	mux.HandleFunc("GET /nar/{name}", h.getObject)
@@ -283,6 +288,13 @@ func (h *handler) putCacheInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func objectName(r *http.Request) (string, bool) {
+	if strings.HasPrefix(r.URL.Path, "/build-trace-v2/") {
+		drv, output := r.PathValue("drv"), r.PathValue("output")
+		if !objectNamePattern.MatchString(drv) || !objectNamePattern.MatchString(output) {
+			return "", false
+		}
+		return "build-trace-v2/" + drv + "/" + output, strings.HasSuffix(output, ".doi")
+	}
 	name := r.PathValue("name")
 	if !objectNamePattern.MatchString(name) {
 		return "", false
@@ -323,7 +335,7 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 	}
 	contentType := "text/x-nix-narinfo"
 	switch {
-	case strings.HasSuffix(name, ".ls"):
+	case strings.HasSuffix(name, ".ls") || strings.HasPrefix(name, "build-trace-v2/"):
 		contentType = "application/json"
 	case strings.HasPrefix(name, "log/"):
 		contentType = "text/plain"

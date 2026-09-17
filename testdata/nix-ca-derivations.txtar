@@ -1,0 +1,41 @@
+[!ca-derivations] skip 'daemon lacks ca-derivations'
+
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &off&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix build --extra-experimental-features ca-derivations --impure --no-link --print-out-paths --expr $CA_EXPR
+capture-output OUT
+! exec nix copy --extra-experimental-features ca-derivations --to http://127.0.0.1:$PORT --impure --expr $CA_EXPR
+stderr 'build-trace-v2/'
+rados-object-count build-trace-v2/
+stdout '^0$'
+rados-object-count nar/
+stdout '^1$'
+kill -INT off
+wait
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --ca-derivations --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix copy --extra-experimental-features ca-derivations --to http://127.0.0.1:$PORT --impure --expr $CA_EXPR
+rados-object-count build-trace-v2/
+stdout '^1$'
+wait4log 'msg=request method=PUT path=/build-trace-v2/[^ ]+/out.doi status=201' server.log
+
+exec nix store build-trace info --extra-experimental-features ca-derivations --store http://127.0.0.1:$PORT --json --impure --expr $CA_EXPR
+stdout '"outPath"'
+stdout 'nix-rados-cache-ca'
+
+exec nix copy --extra-experimental-features ca-derivations --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $OUT
+cmp expected $WORK/store2$OUT
+
+exec nix copy --extra-experimental-features ca-derivations --to http://127.0.0.1:$PORT --impure --expr $CA_EXPR
+rados-object-count build-trace-v2/
+stdout '^1$'
+wait4log 'msg=request method=PUT path=/build-trace-v2/[^ ]+/out.doi status=200' server.log
+
+-- expected --
+ca

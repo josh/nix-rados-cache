@@ -15,6 +15,7 @@ A cache is a single RADOS pool, using the default namespace. Object names carry 
 | `<hash>.narinfo`     | `<hash>.narinfo`                                                     |
 | `<hash>.ls`          | `<hash>.ls`                                                          |
 | `log/<drv>`          | `log/<drv>`                                                          |
+| `build-trace-v2/<drv>/<output>.doi` | `build-trace-v2/<drv>/<output>.doi`, only with `--ca-derivations` |
 | `nar/<name>`         | `nar/<name>.0000000000000000`, `nar/<name>.0000000000000001`, …      |
 
 `<hash>`, `<drv>` and `<name>` consist only of `A-Z a-z 0-9 . _ -`. RADOS names are flat; the `/` in `nar/` is an ordinary character. NAR names are whatever the client uploads, typically `<filehash>.nar.xz` or `<filehash>.nar`.
@@ -27,7 +28,7 @@ A name that does not match one of these shapes is foreign. The server never read
 
 A narinfo, a NAR listing (`.ls`, written by Nix when `write-nar-listing` is on) and a build log (`log/<drv>`, written by `nix store copy-log`) are each one object holding the file's bytes verbatim, created exclusively in a single operation. It has no omap and at most three xattrs: `created`, `access_count` and `accessed`. Maximum size is 16 MiB.
 
-A later PUT of a narinfo changes nothing except that its `Sig:` lines not already present are appended, so signatures accumulate and are never removed or reordered; every other field keeps the bytes from the first upload. A later PUT of a listing or log changes nothing.
+A later PUT of a narinfo changes nothing except that its `Sig:` lines not already present are appended, so signatures accumulate and are never removed or reordered; every other field keeps the bytes from the first upload. A later PUT of a listing, log or realisation changes nothing; Nix re-registers a realisation with a full overwrite, so the first registration and its signatures are what the cache keeps.
 
 ## NAR objects
 
