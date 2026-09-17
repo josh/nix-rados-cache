@@ -2,7 +2,7 @@
 
 Tests are end-to-end testscript scripts in `testdata/`. Do not add Go unit tests; new behavior gets covered by a txtar script exercising the real server over HTTP.
 
-Requires `ceph-mon`, `ceph-osd`, `librados-dev`, and `nix`. The harness starts a throwaway Ceph cluster; the first startup attempt is occasionally flaky and is retried automatically.
+Requires `ceph-mon`, `ceph-osd`, `librados-dev`, and `nix` with a running daemon. The harness starts a throwaway Ceph cluster; the first startup attempt is occasionally flaky and is retried automatically.
 
 ```sh
 go test -cover -timeout 20m .

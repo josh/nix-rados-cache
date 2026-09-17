@@ -1,0 +1,26 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix build --impure --no-link --print-out-paths --expr 'derivation { name = "nix-rados-cache-log"; system = builtins.currentSystem; builder = "/bin/sh"; args = [ "-c" "echo hello-from-builder; echo built > $out" ]; }'
+capture-output OUT
+exec nix copy --to http://127.0.0.1:$PORT $OUT
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $OUT
+stdout '"deriver":"[0-9a-z]+-nix-rados-cache-log\.drv"'
+
+! exec nix log --store http://127.0.0.1:$PORT --substituters '' $OUT
+stderr 'is not available'
+
+exec nix store copy-log --to http://127.0.0.1:$PORT $OUT
+rados-object-count log/
+stdout '^1$'
+wait4log 'msg=request method=PUT path=/log/[0-9a-z]+-nix-rados-cache-log.drv status=201' server.log
+
+exec nix log --store http://127.0.0.1:$PORT --substituters '' $OUT
+stdout '^hello-from-builder$'
+
+exec nix store copy-log --to http://127.0.0.1:$PORT $OUT
+rados-object-count log/
+stdout '^1$'
