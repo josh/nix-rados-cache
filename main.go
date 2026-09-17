@@ -189,9 +189,7 @@ func (h *handler) getCacheInfo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/x-nix-cache-info")
 	w.Header().Set("Content-Length", strconv.Itoa(len(cacheInfo)))
 	w.WriteHeader(http.StatusOK)
-	if r.Method != http.MethodHead {
-		_, _ = io.WriteString(w, cacheInfo)
-	}
+	_, _ = io.WriteString(w, cacheInfo)
 }
 
 func (h *handler) putCacheInfo(w http.ResponseWriter, r *http.Request) {
@@ -236,9 +234,7 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
-	if r.Method != http.MethodHead {
-		_, _ = w.Write(data)
-	}
+	_, _ = w.Write(data)
 }
 
 func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
