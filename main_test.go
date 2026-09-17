@@ -31,7 +31,10 @@ func TestMain(m *testing.M) {
 	})
 }
 
-const timeoutGracePeriod = 2 * time.Second
+const (
+	timeoutGracePeriod = 2 * time.Second
+	caExpr             = `derivation { name = "nix-rados-cache-ca"; system = builtins.currentSystem; builder = "/bin/sh"; args = [ "-c" "echo ca > $out" ]; __contentAddressed = true; outputHashMode = "recursive"; outputHashAlgo = "sha256"; }`
+)
 
 func TestScript(t *testing.T) {
 	ctx := t.Context()
@@ -69,6 +72,15 @@ func TestScript(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	caDerivations := true
+	probe := exec.CommandContext(ctx, "nix", "build", "--dry-run", "--no-link", "--extra-experimental-features", "ca-derivations", "--impure", "--expr", caExpr)
+	if output, err := probe.CombinedOutput(); err != nil {
+		if !strings.Contains(string(output), "experimental Nix feature 'ca-derivations' is disabled") {
+			t.Fatalf("ca-derivations probe: %v\n%s", err, output)
+		}
+		caDerivations = false
+	}
+
 	for _, poolType := range []string{"replicated", "erasure"} {
 		t.Run(poolType, func(t *testing.T) {
 			testscript.Run(t, testscript.Params{
@@ -76,6 +88,12 @@ func TestScript(t *testing.T) {
 				ContinueOnError:     true,
 				RequireExplicitExec: true,
 				Deadline:            deadline,
+				Condition: func(cond string) (bool, error) {
+					if cond == "ca-derivations" {
+						return caDerivations, nil
+					}
+					return false, fmt.Errorf("unknown condition %q", cond)
+				},
 				Cmds: map[string]func(*testscript.TestScript, bool, []string){
 					"bin-cmp":            cmdBinCmp,
 					"bin-file":           cmdBinFile,
@@ -89,6 +107,7 @@ func TestScript(t *testing.T) {
 				Setup: func(env *testscript.Env) error {
 					env.Setenv("CEPH_CONF", confPath)
 					env.Setenv("DEFAULT_POOL_TYPE", poolType)
+					env.Setenv("CA_EXPR", caExpr)
 
 					home := filepath.Join(env.WorkDir, "home")
 					if err := os.MkdirAll(home, 0o755); err != nil {
