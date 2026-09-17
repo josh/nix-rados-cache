@@ -1,0 +1,60 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix key generate-secret --key-name key1
+cp stdout key1.sec
+stdin key1.sec
+exec nix key convert-secret-to-public
+capture-output KEY1_PUB
+exec nix key generate-secret --key-name key2
+cp stdout key2.sec
+stdin key2.sec
+exec nix key convert-secret-to-public
+capture-output KEY2_PUB
+
+exec nix nar pack fixture
+cp stdout signed.nar
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file signed.nar http://127.0.0.1:$PORT/nar/signed.nar
+stdout '^201$'
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file signed.narinfo http://127.0.0.1:$PORT/signd000000000000000000000000000.narinfo
+stdout '^201$'
+
+! exec nix copy --from http://127.0.0.1:$PORT --to $WORK/store2 --trusted-public-keys $KEY1_PUB /nix/store/signd000000000000000000000000000-signed
+stderr 'lacks a signature by a trusted key'
+
+exec nix store sign --store http://127.0.0.1:$PORT --key-file key1.sec /nix/store/signd000000000000000000000000000-signed
+exec nix copy --from http://127.0.0.1:$PORT --to $WORK/store2 --trusted-public-keys $KEY1_PUB /nix/store/signd000000000000000000000000000-signed
+cmp fixture/hello.txt $WORK/store2/nix/store/signd000000000000000000000000000-signed/hello.txt
+
+! exec nix copy --from http://127.0.0.1:$PORT --to $WORK/store3 --trusted-public-keys $KEY2_PUB /nix/store/signd000000000000000000000000000-signed
+stderr 'lacks a signature by a trusted key'
+
+exec nix store sign --store http://127.0.0.1:$PORT --key-file key2.sec /nix/store/signd000000000000000000000000000-signed
+exec nix copy --from http://127.0.0.1:$PORT --to $WORK/store3 --trusted-public-keys $KEY2_PUB /nix/store/signd000000000000000000000000000-signed
+cmp fixture/hello.txt $WORK/store3/nix/store/signd000000000000000000000000000-signed/hello.txt
+exec curl --silent --fail --output signed-after.narinfo http://127.0.0.1:$PORT/signd000000000000000000000000000.narinfo
+grep -count=2 '^Sig: ' signed-after.narinfo
+
+exec nix store verify --store http://127.0.0.1:$PORT --trusted-public-keys $KEY2_PUB --sigs-needed 1 /nix/store/signd000000000000000000000000000-signed
+! exec nix store verify --store http://127.0.0.1:$PORT --trusted-public-keys $KEY2_PUB --sigs-needed 2 /nix/store/signd000000000000000000000000000-signed
+stderr 'is untrusted'
+! exec nix store verify --store http://127.0.0.1:$PORT /nix/store/signd000000000000000000000000000-signed
+stderr 'is untrusted'
+
+-- fixture/hello.txt --
+hello from nix-rados-cache
+-- fixture/bin/greet --
+#!/bin/sh
+echo hi
+-- signed.narinfo --
+StorePath: /nix/store/signd000000000000000000000000000-signed
+URL: nar/signed.nar
+Compression: none
+FileHash: sha256:0gq2f1n11b062in6f13i5a4aqv027qx3fdg11rsjbb7rj4pgjbdk
+FileSize: 696
+NarHash: sha256:0gq2f1n11b062in6f13i5a4aqv027qx3fdg11rsjbb7rj4pgjbdk
+NarSize: 696
+References: 

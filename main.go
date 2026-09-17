@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -26,7 +28,10 @@ const (
 	stripeSizeXattr  = "striper.layout.object_size"
 )
 
-var objectNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+var (
+	objectNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	sigLinePattern    = regexp.MustCompile(`^Sig: [^:\s]+:[A-Za-z0-9+/=]+$`)
+)
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8080", "TCP address to listen on")
@@ -117,6 +122,35 @@ func putObject(ioctx *rados.IOContext, name string, data []byte, calls *int) err
 	defer op.Release()
 	op.Create(rados.CreateExclusive)
 	op.WriteFull(data)
+	*calls++
+	return op.Operate(ioctx, name, rados.OperationNoFlag)
+}
+
+func sigLines(narinfo []byte) []string {
+	var sigs []string
+	for line := range strings.Lines(string(narinfo)) {
+		if line = strings.TrimSuffix(line, "\n"); strings.HasPrefix(line, "Sig: ") {
+			sigs = append(sigs, line)
+		}
+	}
+	return sigs
+}
+
+func appendSigs(ioctx *rados.IOContext, name string, sigs []string, calls *int) error {
+	stored, err := getObject(ioctx, name, calls)
+	if err != nil {
+		return err
+	}
+	version, _ := ioctx.GetLastVersion()
+	existing := sigLines(stored)
+	add := slices.DeleteFunc(slices.Clone(sigs), func(s string) bool { return slices.Contains(existing, s) })
+	if len(add) == 0 {
+		return nil
+	}
+	op := rados.CreateWriteOp()
+	defer op.Release()
+	op.AssertVersion(version)
+	op.WriteFull(append(stored, strings.Join(add, "\n")+"\n"...))
 	*calls++
 	return op.Operate(ioctx, name, rados.OperationNoFlag)
 }
@@ -335,7 +369,15 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "object too large", http.StatusRequestEntityTooLarge)
 			return
 		}
+		sigs := sigLines(data)
+		if slices.ContainsFunc(sigs, func(s string) bool { return !sigLinePattern.MatchString(s) }) {
+			http.Error(w, "malformed Sig line", http.StatusBadRequest)
+			return
+		}
 		err = putObject(h.ioctx, name, data, &s.radosCalls)
+		if errors.Is(err, rados.ErrObjectExists) && len(sigs) > 0 {
+			err = cmp.Or(appendSigs(h.ioctx, name, sigs, &s.radosCalls), err)
+		}
 	}
 	switch {
 	case errors.Is(err, rados.ErrObjectExists):

@@ -23,7 +23,7 @@ A name that does not match one of these shapes is foreign. The server never read
 
 ## Narinfo objects
 
-A narinfo is one object holding the file's bytes verbatim, created exclusively in a single operation: an existing object is never overwritten, and a duplicate upload leaves the stored bytes untouched. It has no omap and at most one xattr, `access_count`. Maximum size is 16 MiB.
+A narinfo is one object holding the file's bytes verbatim, created exclusively in a single operation. A later PUT of the same name changes nothing except that its `Sig:` lines not already present are appended, so signatures accumulate and are never removed or reordered; every other field keeps the bytes from the first upload. It has no omap and at most one xattr, `access_count`. Maximum size is 16 MiB.
 
 ## NAR objects
 
@@ -59,7 +59,7 @@ An alternative implementation must:
 
 - name objects exactly as in *Object names* and add no prefix
 - write NARs in the stripe layout above, stripe 0 last and exclusively
-- never overwrite a narinfo or a stripe 0
+- never modify a narinfo except by appending `Sig:` lines; never overwrite a stripe 0
 - store file bytes verbatim, with no omap and no xattrs other than those listed
 - ignore names it does not recognise
 - treat a missing `access_count` as zero; it may leave the xattr untouched

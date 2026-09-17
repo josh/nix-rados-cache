@@ -1,0 +1,67 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix key generate-secret --key-name key1
+cp stdout key1.sec
+stdin key1.sec
+exec nix key convert-secret-to-public
+capture-output KEY1_PUB
+exec nix key generate-secret --key-name key2
+cp stdout key2.sec
+stdin key2.sec
+exec nix key convert-secret-to-public
+capture-output KEY2_PUB
+
+exec nix store add-path --store $WORK/store1 --name hello fixture
+stdout '^/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello$'
+exec nix store sign --store $WORK/store1 --key-file key1.sec /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+exec curl --silent --fail --output hello.narinfo http://127.0.0.1:$PORT/9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo
+grep -count=1 '^Sig: key1:' hello.narinfo
+
+exec nix store add-path --store $WORK/store1 --name other other
+stdout '^/nix/store/8pjpdkixgy5bghm2hpflddxg2vk7y758-other$'
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?secret-key=$WORK/key2.sec /nix/store/8pjpdkixgy5bghm2hpflddxg2vk7y758-other
+exec curl --silent --fail --output other.narinfo http://127.0.0.1:$PORT/8pjpdkixgy5bghm2hpflddxg2vk7y758.narinfo
+grep -count=1 '^Sig: key2:' other.narinfo
+
+exec nix store sign --store http://127.0.0.1:$PORT --key-file key2.sec /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+wait4log 'msg=request method=PUT path=/9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo status=200 .* rados_calls=4' server.log
+exec curl --silent --fail --output hello2.narinfo http://127.0.0.1:$PORT/9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo
+grep -count=2 '^Sig: ' hello2.narinfo
+grep '^Sig: key1:' hello2.narinfo
+grep '^Sig: key2:' hello2.narinfo
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file unsigned.narinfo http://127.0.0.1:$PORT/9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo
+stdout '^200$'
+wait4log 'msg=request method=PUT path=/9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo status=200 .* rados_calls=1' server.log
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file bad.narinfo http://127.0.0.1:$PORT/9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo
+stdout '^400$'
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file hello2.narinfo http://127.0.0.1:$PORT/9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo
+stdout '^200$'
+wait4log 'msg=request method=PUT path=/9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo status=200 .* rados_calls=3' server.log
+exec curl --silent --fail --output hello3.narinfo http://127.0.0.1:$PORT/9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo
+cmp hello2.narinfo hello3.narinfo
+
+exec nix copy --from http://127.0.0.1:$PORT --to $WORK/store2 --trusted-public-keys $KEY2_PUB /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+cmp fixture/hello.txt $WORK/store2/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello/hello.txt
+
+-- fixture/hello.txt --
+hello from nix-rados-cache
+-- fixture/bin/greet --
+#!/bin/sh
+echo hi
+-- other/other.txt --
+other
+-- unsigned.narinfo --
+StorePath: /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+URL: nar/unused.nar
+Compression: none
+NarHash: sha256:0gq2f1n11b062in6f13i5a4aqv027qx3fdg11rsjbb7rj4pgjbdk
+NarSize: 696
+-- bad.narinfo --
+StorePath: /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+Sig: key1 not base64
