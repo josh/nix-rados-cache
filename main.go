@@ -186,7 +186,6 @@ func (h *handler) getCacheInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) putCacheInfo(w http.ResponseWriter, r *http.Request) {
-	_, _ = io.Copy(io.Discard, r.Body)
 	w.WriteHeader(http.StatusOK)
 }
 
