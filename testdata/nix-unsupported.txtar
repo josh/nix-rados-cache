@@ -1,0 +1,28 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix store add-path --store $WORK/store1 --name hello fixture
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+
+! exec nix store gc --store http://127.0.0.1:$PORT
+stderr 'Garbage collection not supported'
+! exec nix store delete --store http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+stderr 'Garbage collection not supported'
+! exec nix store repair --store http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+stderr 'cannot repair'
+! exec nix path-info --store http://127.0.0.1:$PORT --all
+stderr 'not supported'
+
+exec nix path-info --store http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+stdout '^/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello$'
+rados-object-count ''
+stdout '^2$'
+
+-- fixture/hello.txt --
+hello from nix-rados-cache
+-- fixture/bin/greet --
+#!/bin/sh
+echo hi

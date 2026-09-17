@@ -1,0 +1,90 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix store add-path --store http://127.0.0.1:$PORT --name hello fixture
+stdout '^/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello$'
+rados-object-count nar/
+stdout '^1$'
+exec nix store add-file --store http://127.0.0.1:$PORT --name greeting fixture/hello.txt
+capture-output GREETING
+rados-object-count nar/
+stdout '^2$'
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello $GREETING
+cmp fixture/hello.txt $WORK/store2/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello/hello.txt
+cmp fixture/hello.txt $WORK/store2$GREETING
+
+exec nix store add-path --store $WORK/store1 --name p01 many/01.txt
+exec nix store add-path --store $WORK/store1 --name p02 many/02.txt
+exec nix store add-path --store $WORK/store1 --name p03 many/03.txt
+exec nix store add-path --store $WORK/store1 --name p04 many/04.txt
+exec nix store add-path --store $WORK/store1 --name p05 many/05.txt
+exec nix store add-path --store $WORK/store1 --name p06 many/06.txt
+exec nix store add-path --store $WORK/store1 --name p07 many/07.txt
+exec nix store add-path --store $WORK/store1 --name p08 many/08.txt
+exec nix store add-path --store $WORK/store1 --name p09 many/09.txt
+exec nix store add-path --store $WORK/store1 --name p10 many/10.txt
+exec nix store add-path --store $WORK/store1 --name p11 many/11.txt
+exec nix store add-path --store $WORK/store1 --name p12 many/12.txt
+exec nix store add-path --store $WORK/store1 --name p13 many/13.txt
+exec nix store add-path --store $WORK/store1 --name p14 many/14.txt
+exec nix store add-path --store $WORK/store1 --name p15 many/15.txt
+exec nix store add-path --store $WORK/store1 --name p16 many/16.txt
+exec nix store add-path --store $WORK/store1 --name p17 many/17.txt
+exec nix store add-path --store $WORK/store1 --name p18 many/18.txt
+exec nix store add-path --store $WORK/store1 --name p19 many/19.txt
+exec nix store add-path --store $WORK/store1 --name p20 many/20.txt
+capture-output P20
+exec nix copy --all --from $WORK/store1 --to http://127.0.0.1:$PORT
+rados-object-count nar/
+stdout '^22$'
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $P20
+cmp many/20.txt $WORK/store2$P20
+
+-- fixture/hello.txt --
+hello from nix-rados-cache
+-- fixture/bin/greet --
+#!/bin/sh
+echo hi
+-- many/01.txt --
+path 01
+-- many/02.txt --
+path 02
+-- many/03.txt --
+path 03
+-- many/04.txt --
+path 04
+-- many/05.txt --
+path 05
+-- many/06.txt --
+path 06
+-- many/07.txt --
+path 07
+-- many/08.txt --
+path 08
+-- many/09.txt --
+path 09
+-- many/10.txt --
+path 10
+-- many/11.txt --
+path 11
+-- many/12.txt --
+path 12
+-- many/13.txt --
+path 13
+-- many/14.txt --
+path 14
+-- many/15.txt --
+path 15
+-- many/16.txt --
+path 16
+-- many/17.txt --
+path 17
+-- many/18.txt --
+path 18
+-- many/19.txt --
+path 19
+-- many/20.txt --
+path 20

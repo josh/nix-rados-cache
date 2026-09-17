@@ -1,0 +1,51 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix key generate-secret --key-name key1
+cp stdout key1.sec
+exec nix store add-path --store $WORK/store1 --name hello fixture
+stdout '^/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello$'
+exec nix store sign --store $WORK/store1 --key-file key1.sec /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+
+exec nix store info --store http://127.0.0.1:$PORT
+stderr 'Store URL: http://127.0.0.1:'
+exec nix store info --store http://127.0.0.1:$PORT --json
+stdout '"url":"http://127.0.0.1:'
+
+exec nix store dump-path --store http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+cp stdout dumped.nar
+exec nix nar pack fixture
+cp stdout packed.nar
+bin-cmp dumped.nar packed.nar
+
+exec nix store ls --store http://127.0.0.1:$PORT -R -l /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+stdout '18 ./bin/greet'
+stdout '27 ./hello.txt'
+exec nix store cat --store http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello/hello.txt
+stdout '^hello from nix-rados-cache$'
+
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+stdout '"narSize":696'
+stdout 'key1:'
+exec nix path-info --store http://127.0.0.1:$PORT --sigs /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+stdout 'key1:'
+exec nix path-info --store http://127.0.0.1:$PORT --size /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+stdout '696'
+exec nix path-info --store http://127.0.0.1:$PORT --closure-size /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+stdout '696'
+
+exec nix store add-path --store $WORK/store2 --name hello fixture
+exec nix store copy-sigs --store $WORK/store2 --substituter http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+stderr 'imported 1 signatures'
+exec nix path-info --store $WORK/store2 --sigs /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+stdout 'key1:'
+
+-- fixture/hello.txt --
+hello from nix-rados-cache
+-- fixture/bin/greet --
+#!/bin/sh
+echo hi

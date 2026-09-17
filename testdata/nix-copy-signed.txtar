@@ -49,6 +49,15 @@ cmp hello2.narinfo hello3.narinfo
 exec nix copy --from http://127.0.0.1:$PORT --to $WORK/store2 --trusted-public-keys $KEY2_PUB /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
 cmp fixture/hello.txt $WORK/store2/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello/hello.txt
 
+exec nix store add-path --store $WORK/store1 --name both both
+capture-output BOTH
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?secret-keys=$WORK/key1.sec,$WORK/key2.sec $BOTH
+exec nix path-info --store http://127.0.0.1:$PORT --sigs $BOTH
+stdout 'key1:'
+stdout 'key2:'
+
+-- both/f.txt --
+both
 -- fixture/hello.txt --
 hello from nix-rados-cache
 -- fixture/bin/greet --
