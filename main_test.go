@@ -255,8 +255,8 @@ func cmdRadosObjectCount(ts *testscript.TestScript, neg bool, args []string) {
 		ts.Fatalf("failed to list rados objects: %v\noutput: %s", err, output)
 	}
 	count := 0
-	for _, line := range strings.Split(string(output), "\n") {
-		if line != "" && strings.HasPrefix(line, args[0]) {
+	for line := range strings.Lines(string(output)) {
+		if strings.HasPrefix(line, args[0]) {
 			count++
 		}
 	}
