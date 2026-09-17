@@ -14,7 +14,7 @@ stdout '^1$'
 rados-object-count ''
 stdout '^2$'
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL listxattr 9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo
-! stdout .
+stdout '^created$'
 
 exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
 cmp fixture/hello.txt $WORK/store2/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello/hello.txt

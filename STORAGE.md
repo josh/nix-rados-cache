@@ -25,7 +25,7 @@ A name that does not match one of these shapes is foreign. The server never read
 
 ## Plain objects
 
-A narinfo, a NAR listing (`.ls`, written by Nix when `write-nar-listing` is on) and a build log (`log/<drv>`, written by `nix store copy-log`) are each one object holding the file's bytes verbatim, created exclusively in a single operation. It has no omap and at most one xattr, `access_count`. Maximum size is 16 MiB.
+A narinfo, a NAR listing (`.ls`, written by Nix when `write-nar-listing` is on) and a build log (`log/<drv>`, written by `nix store copy-log`) are each one object holding the file's bytes verbatim, created exclusively in a single operation. It has no omap and at most three xattrs: `created`, `access_count` and `accessed`. Maximum size is 16 MiB.
 
 A later PUT of a narinfo changes nothing except that its `Sig:` lines not already present are appended, so signatures accumulate and are never removed or reordered; every other field keeps the bytes from the first upload. A later PUT of a listing or log changes nothing.
 
@@ -41,7 +41,9 @@ Stripe 0 carries the xattrs:
 | `striper.layout.stripe_count` | `1`                                     |
 | `striper.layout.object_size`  | `S`                                     |
 | `striper.size`                | total length of the NAR in bytes        |
+| `created`                     | see below                               |
 | `access_count`                | see below; absent until the first GET   |
+| `accessed`                    | see below; absent until the first GET   |
 
 Readers take `S` from `striper.layout.object_size`, never from the running server's flag, so NARs written under a different stripe size stay readable.
 
@@ -49,9 +51,11 @@ Stripes 1 and up are written first, each as one full-object write. Stripe 0 is w
 
 `S` must not exceed the cluster's `osd_max_object_size`, and `S` plus the xattrs written with stripe 0 must fit within `osd_max_write_size`; a stripe the OSD refuses fails the upload.
 
-## Access counts
+## Access metadata
 
-`access_count` is a decimal ASCII count of successful GET requests for the object, kept on a narinfo object or on stripe 0 of a NAR. It is absent until the first GET, and an absent xattr means zero. HEAD and PUT never touch it. It is best-effort: concurrent reads of one object can lose increments. A NAR's count is its downloads. A narinfo's count is queries: Nix GETs a narinfo several times per download and once more when pushing a path that already exists.
+These xattrs live on a plain object or on stripe 0 of a NAR. `created` is the time the object was written and never changes. `access_count` is a decimal ASCII count of successful GET requests, and `accessed` is the time of the most recent one; both are absent until the first GET, and an absent count means zero. Times are RFC 3339 in UTC to the second. HEAD and PUT never touch the count or `accessed`. The count is best-effort: concurrent reads of one object can lose increments. A NAR's count is its downloads. A narinfo's count is queries: Nix GETs a narinfo several times per download and once more when pushing a path that already exists.
+
+The object's own RADOS mtime is updated by these xattr writes, so it records when the object was last touched, not when its content was written.
 
 ## Integrity
 

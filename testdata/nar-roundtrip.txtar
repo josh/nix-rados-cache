@@ -13,6 +13,9 @@ bin-file payload.nar.xz 1048576
 exec curl --silent --write-out '%{http_code}' --upload-file payload.nar.xz http://127.0.0.1:$PORT/nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz
 stdout '^201$'
 wait4log 'msg=request method=PUT path=/nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz status=201 .* rados_calls=1' server.log
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz.0000000000000000 created
+stdout '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$'
+! exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz.0000000000000000 accessed
 
 exec curl --silent --head http://127.0.0.1:$PORT/nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz
 stdout 'HTTP/1.1 200'
@@ -25,6 +28,8 @@ bin-cmp payload.nar.xz downloaded.nar.xz
 wait4log 'msg=request method=GET path=/nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz status=200 .* resp_bytes=1048576 rados_calls=3 access_count=1' server.log
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz.0000000000000000 access_count
 stdout '^1$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz.0000000000000000 accessed
+stdout '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$'
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz.0000000000000000 striper.size
 stdout '^1048576$'
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL --striper get nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz striped.nar.xz
@@ -45,6 +50,8 @@ exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL --striper get nar/big.
 bin-cmp big.nar.xz big-striped.nar.xz
 rados-object-count nar/big
 stdout '^3$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL listxattr nar/big.nar.xz.0000000000000001
+! stdout .
 
 exec curl --silent --write-out '%{http_code}' --upload-file big.nar.xz http://127.0.0.1:$PORT/nar/big.nar.xz
 stdout '^200$'

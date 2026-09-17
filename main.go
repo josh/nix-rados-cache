@@ -24,6 +24,8 @@ const (
 	cacheInfo        = "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n"
 	maxNarinfoSize   = 16 * 1024 * 1024
 	accessCountXattr = "access_count"
+	accessedXattr    = "accessed"
+	createdXattr     = "created"
 	sizeXattr        = "striper.size"
 	stripeSizeXattr  = "striper.layout.object_size"
 )
@@ -117,10 +119,15 @@ func getObject(ioctx *rados.IOContext, name string, calls *int) ([]byte, error) 
 	return data[:n], nil
 }
 
+func now() []byte {
+	return []byte(time.Now().UTC().Format(time.RFC3339))
+}
+
 func putObject(ioctx *rados.IOContext, name string, data []byte, calls *int) error {
 	op := rados.CreateWriteOp()
 	defer op.Release()
 	op.Create(rados.CreateExclusive)
+	op.SetXattr(createdXattr, now())
 	op.WriteFull(data)
 	*calls++
 	return op.Operate(ioctx, name, rados.OperationNoFlag)
@@ -189,6 +196,7 @@ func putNAR(ioctx *rados.IOContext, name string, body io.Reader, stripeSize int,
 	op.SetXattr("striper.layout.stripe_count", []byte("1"))
 	op.SetXattr(stripeSizeXattr, size)
 	op.SetXattr(sizeXattr, []byte(strconv.Itoa(total)))
+	op.SetXattr(createdXattr, now())
 	op.WriteFull(first)
 	*calls++
 	return op.Operate(ioctx, stripeName(name, 0), rados.OperationNoFlag)
@@ -197,8 +205,12 @@ func putNAR(ioctx *rados.IOContext, name string, body io.Reader, stripeSize int,
 func setAccess(ioctx *rados.IOContext, name string, prev []byte, calls *int) (uint64, error) {
 	count, _ := strconv.ParseUint(string(prev), 10, 64)
 	count++
+	op := rados.CreateWriteOp()
+	defer op.Release()
+	op.SetXattr(accessCountXattr, []byte(strconv.FormatUint(count, 10)))
+	op.SetXattr(accessedXattr, now())
 	*calls++
-	return count, ioctx.SetXattr(name, accessCountXattr, []byte(strconv.FormatUint(count, 10)))
+	return count, op.Operate(ioctx, name, rados.OperationNoFlag)
 }
 
 type handler struct {
