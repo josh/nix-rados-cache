@@ -175,7 +175,8 @@ func cmdCreatePool(ts *testscript.TestScript, neg bool, args []string) {
 	if neg {
 		ts.Fatalf("unsupported: ! create-pool")
 	}
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	poolType := ts.Getenv("DEFAULT_POOL_TYPE")
 	confPath := ts.Getenv("CEPH_CONF")
 
@@ -199,7 +200,9 @@ func cmdCreatePool(ts *testscript.TestScript, neg bool, args []string) {
 
 	ts.Setenv("NIX_RADOS_CACHE_POOL", poolName)
 	ts.Defer(func() {
-		deleteCmd := exec.Command("ceph", "--conf", confPath, "osd", "pool", "delete", poolName, poolName, "--yes-i-really-really-mean-it")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		deleteCmd := exec.CommandContext(ctx, "ceph", "--conf", confPath, "osd", "pool", "delete", poolName, poolName, "--yes-i-really-really-mean-it")
 		if err := deleteCmd.Run(); err != nil {
 			ts.Logf("warning: failed to delete pool %s: %v", poolName, err)
 		}
