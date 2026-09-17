@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,6 +84,7 @@ func TestScript(t *testing.T) {
 					"rados-object-count": cmdRadosObjectCount,
 					"tail-logs":          cmdTailLogs,
 					"wait4http":          cmdWait4HTTP,
+					"wait4log":           cmdWait4Log,
 				},
 				Setup: func(env *testscript.Env) error {
 					env.Setenv("CEPH_CONF", confPath)
@@ -130,42 +132,64 @@ func cmdTailLogs(ts *testscript.TestScript, neg bool, args []string) {
 	detachOutput := tailOutput.Attach(&output)
 
 	var tailers sync.WaitGroup
+	var serverFile *os.File
 	ts.Defer(func() {
 		cancel()
 		_ = pipeReader.Close()
 		detach()
 		tailers.Wait()
+		if serverFile != nil {
+			_ = serverFile.Close()
+		}
 		detachOutput()
 		if output.Len() > 0 {
 			ts.Logf("%s", strings.TrimSuffix(output.String(), "\n"))
 		}
 	})
 
-	tailers.Add(1)
-	go func() {
+	tail := func(prefix string, open func() (io.Reader, error)) {
 		defer tailers.Done()
-		reader := bufio.NewReader(pipeReader)
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
+		var reader *bufio.Reader
 		for {
 			select {
 			case <-tailCtx.Done():
 				return
 			case <-ticker.C:
+				if reader == nil {
+					r, err := open()
+					if err != nil {
+						continue
+					}
+					reader = bufio.NewReader(r)
+				}
 				line, err := reader.ReadString('\n')
 				if err != nil {
 					if err == io.EOF {
 						continue
 					}
 					if !errors.Is(err, io.ErrClosedPipe) {
-						_, _ = fmt.Fprintf(tailOutput, "[ceph] tail error: %v\n", err)
+						_, _ = fmt.Fprintf(tailOutput, "%s tail error: %v\n", prefix, err)
 					}
 					return
 				}
-				_, _ = fmt.Fprintf(tailOutput, "[ceph] %s\n", strings.TrimRight(line, "\n"))
+				_, _ = fmt.Fprintf(tailOutput, "%s %s\n", prefix, strings.TrimRight(line, "\n"))
 			}
 		}
-	}()
+	}
+
+	serverLog := ts.MkAbs("server.log")
+	tailers.Add(2)
+	go tail("[ceph]", func() (io.Reader, error) { return pipeReader, nil })
+	go tail("[nix-rados-cache]", func() (io.Reader, error) {
+		f, err := os.Open(serverLog)
+		if err != nil {
+			return nil, err
+		}
+		serverFile = f
+		return f, nil
+	})
 }
 
 func cmdCreatePool(ts *testscript.TestScript, neg bool, args []string) {
@@ -217,6 +241,24 @@ func cmdWait4HTTP(ts *testscript.TestScript, neg bool, args []string) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	ts.Fatalf("%s never returned 200", args[0])
+}
+
+func cmdWait4Log(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) != 2 {
+		ts.Fatalf("usage: wait4log <regexp> <file>")
+	}
+	pattern, err := regexp.Compile(args[0])
+	if err != nil {
+		ts.Fatalf("invalid pattern: %v", err)
+	}
+	path := ts.MkAbs(args[1])
+	for range 150 {
+		if data, err := os.ReadFile(path); err == nil && pattern.Match(data) {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	ts.Fatalf("pattern %q did not appear in %s", args[0], args[1])
 }
 
 func cmdRadosObjectCount(ts *testscript.TestScript, neg bool, args []string) {

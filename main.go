@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ceph/go-ceph/rados"
 )
@@ -29,7 +30,19 @@ var (
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8080", "TCP address to listen on")
 	pool := flag.String("pool", "", "RADOS pool name")
+	logFile := flag.String("log-file", "", "append logs to this file instead of stderr")
 	flag.Parse()
+
+	var logOut io.Writer = os.Stderr
+	if *logFile != "" {
+		f, err := os.OpenFile(*logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "open log file:", err)
+			os.Exit(1)
+		}
+		logOut = f
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(logOut, nil)))
 
 	if *pool == "" {
 		fmt.Fprintln(os.Stderr, "--pool is required")
@@ -46,6 +59,7 @@ func main() {
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt)
 		<-c
+		slog.Info("shutting down")
 		os.Exit(0)
 	}()
 
@@ -115,7 +129,22 @@ func newHandler(ioctx *rados.IOContext) http.Handler {
 	mux.HandleFunc("PUT /nar/{name}", h.putObject)
 	mux.HandleFunc("GET /{name}", h.getObject)
 	mux.HandleFunc("PUT /{name}", h.putObject)
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		mux.ServeHTTP(sw, r)
+		slog.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start))
+	})
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
 }
 
 func (h *handler) getCacheInfo(w http.ResponseWriter, r *http.Request) {

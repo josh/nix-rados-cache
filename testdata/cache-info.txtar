@@ -1,7 +1,7 @@
 tail-logs
 create-pool
 
-exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT &server&
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
 wait4http http://127.0.0.1:$PORT/nix-cache-info
 
 exec curl --silent --fail --output cache-info http://127.0.0.1:$PORT/nix-cache-info
