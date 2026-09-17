@@ -20,8 +20,10 @@ import (
 
 const (
 	cacheInfo        = "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n"
-	maxObjectSize    = 16 * 1024 * 1024
+	maxNarinfoSize   = 16 * 1024 * 1024
 	accessCountXattr = "access_count"
+	sizeXattr        = "striper.size"
+	stripeSizeXattr  = "striper.layout.object_size"
 )
 
 var objectNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -29,6 +31,7 @@ var objectNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8080", "TCP address to listen on")
 	pool := flag.String("pool", "", "RADOS pool name")
+	stripeSize := flag.Int("stripe-size", 16*1024*1024, "bytes per RADOS object for NARs")
 	logFile := flag.String("log-file", "", "append logs to this file instead of stderr")
 	flag.Parse()
 
@@ -47,6 +50,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "--pool is required")
 		os.Exit(1)
 	}
+	if *stripeSize <= 0 {
+		fmt.Fprintln(os.Stderr, "--stripe-size must be positive")
+		os.Exit(1)
+	}
 
 	ioctx, err := openPool(*pool)
 	if err != nil {
@@ -62,8 +69,8 @@ func main() {
 		os.Exit(0)
 	}()
 
-	slog.Info("listening", "address", *listen, "pool", *pool)
-	if err := http.ListenAndServe(*listen, newHandler(ioctx)); err != nil {
+	slog.Info("listening", "address", *listen, "pool", *pool, "stripe_size", *stripeSize)
+	if err := http.ListenAndServe(*listen, newHandler(ioctx, *stripeSize)); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
 	}
@@ -114,21 +121,59 @@ func putObject(ioctx *rados.IOContext, name string, data []byte, calls *int) err
 	return op.Operate(ioctx, name, rados.OperationNoFlag)
 }
 
-func countAccess(ioctx *rados.IOContext, name string, calls *int) (uint64, error) {
+func stripeName(name string, i int) string {
+	return fmt.Sprintf("%s.%016x", name, i)
+}
+
+func putNAR(ioctx *rados.IOContext, name string, body io.Reader, stripeSize int, calls *int) error {
+	var first []byte
+	buf := make([]byte, stripeSize)
+	total := 0
+	for i := 0; ; i++ {
+		n, err := io.ReadFull(body, buf)
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return err
+		}
+		total += n
+		if i == 0 {
+			first, buf = buf[:n], make([]byte, stripeSize)
+		} else if n > 0 {
+			*calls++
+			if err := ioctx.WriteFull(stripeName(name, i), buf[:n]); err != nil {
+				return err
+			}
+		}
+		if n < stripeSize {
+			break
+		}
+	}
+	size := []byte(strconv.Itoa(stripeSize))
+	op := rados.CreateWriteOp()
+	defer op.Release()
+	op.Create(rados.CreateExclusive)
+	op.SetXattr("striper.layout.stripe_unit", size)
+	op.SetXattr("striper.layout.stripe_count", []byte("1"))
+	op.SetXattr(stripeSizeXattr, size)
+	op.SetXattr(sizeXattr, []byte(strconv.Itoa(total)))
+	op.WriteFull(first)
 	*calls++
-	xattrs, _ := ioctx.ListXattrs(name)
-	count, _ := strconv.ParseUint(string(xattrs[accessCountXattr]), 10, 64)
+	return op.Operate(ioctx, stripeName(name, 0), rados.OperationNoFlag)
+}
+
+func setAccess(ioctx *rados.IOContext, name string, prev []byte, calls *int) (uint64, error) {
+	count, _ := strconv.ParseUint(string(prev), 10, 64)
 	count++
 	*calls++
 	return count, ioctx.SetXattr(name, accessCountXattr, []byte(strconv.FormatUint(count, 10)))
 }
 
 type handler struct {
-	ioctx *rados.IOContext
+	ioctx      *rados.IOContext
+	stripeSize int
 }
 
-func newHandler(ioctx *rados.IOContext) http.Handler {
-	h := &handler{ioctx: ioctx}
+func newHandler(ioctx *rados.IOContext, stripeSize int) http.Handler {
+	h := &handler{ioctx: ioctx, stripeSize: stripeSize}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /nix-cache-info", h.getCacheInfo)
 	mux.HandleFunc("PUT /nix-cache-info", h.putCacheInfo)
@@ -206,6 +251,10 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if strings.HasPrefix(name, "nar/") {
+		h.getNAR(w, r, name)
+		return
+	}
 	data, err := getObject(h.ioctx, name, &stats(r).radosCalls)
 	if err != nil {
 		writeStoreError(w, name, err)
@@ -213,20 +262,57 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet {
 		s := stats(r)
-		count, err := countAccess(h.ioctx, name, &s.radosCalls)
+		s.radosCalls++
+		xattrs, _ := h.ioctx.ListXattrs(name)
+		count, err := setAccess(h.ioctx, name, xattrs[accessCountXattr], &s.radosCalls)
 		if err != nil {
 			slog.Error("access count", "object", name, "error", err)
 		}
 		s.accessCount = count
 	}
-	contentType := "text/x-nix-narinfo"
-	if strings.HasPrefix(name, "nar/") {
-		contentType = "application/x-nix-nar"
-	}
-	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Type", "text/x-nix-narinfo")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+func (h *handler) getNAR(w http.ResponseWriter, r *http.Request, name string) {
+	s := stats(r)
+	head := stripeName(name, 0)
+	s.radosCalls++
+	xattrs, err := h.ioctx.ListXattrs(head)
+	if err != nil {
+		writeStoreError(w, name, err)
+		return
+	}
+	size, _ := strconv.ParseUint(string(xattrs[sizeXattr]), 10, 64)
+	stripeSize, _ := strconv.Atoi(string(xattrs[stripeSizeXattr]))
+	if r.Method == http.MethodGet {
+		count, err := setAccess(h.ioctx, head, xattrs[accessCountXattr], &s.radosCalls)
+		if err != nil {
+			slog.Error("access count", "object", name, "error", err)
+		}
+		s.accessCount = count
+	}
+	w.Header().Set("Content-Type", "application/x-nix-nar")
+	w.Header().Set("Content-Length", strconv.FormatUint(size, 10))
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
+	buf := make([]byte, stripeSize)
+	for i, sent := 0, uint64(0); sent < size; i++ {
+		s.radosCalls++
+		n, err := h.ioctx.Read(stripeName(name, i), buf, 0)
+		if err != nil || n == 0 {
+			slog.Error("read stripe", "object", stripeName(name, i), "error", err)
+			return
+		}
+		sent += uint64(n)
+		if _, err := w.Write(buf[:n]); err != nil {
+			return
+		}
+	}
 }
 
 func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
@@ -235,16 +321,22 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data, err := io.ReadAll(io.LimitReader(r.Body, maxObjectSize+1))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	s := stats(r)
+	var err error
+	if strings.HasPrefix(name, "nar/") {
+		err = putNAR(h.ioctx, name, r.Body, h.stripeSize, &s.radosCalls)
+	} else {
+		data, rerr := io.ReadAll(io.LimitReader(r.Body, maxNarinfoSize+1))
+		if rerr != nil {
+			http.Error(w, rerr.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(data) > maxNarinfoSize {
+			http.Error(w, "object too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		err = putObject(h.ioctx, name, data, &s.radosCalls)
 	}
-	if len(data) > maxObjectSize {
-		http.Error(w, "object too large", http.StatusRequestEntityTooLarge)
-		return
-	}
-	err = putObject(h.ioctx, name, data, &stats(r).radosCalls)
 	switch {
 	case errors.Is(err, rados.ErrObjectExists):
 		w.WriteHeader(http.StatusOK)

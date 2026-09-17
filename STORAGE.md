@@ -10,10 +10,10 @@ A cache is a single RADOS pool, using the default namespace. Object names carry 
 
 ## Object names
 
-| Nix cache path       | RADOS object name  |
-|----------------------|--------------------|
-| `<hash>.narinfo`     | `<hash>.narinfo`   |
-| `nar/<name>`         | `nar/<name>`       |
+| Nix cache path       | RADOS objects                                                        |
+|----------------------|----------------------------------------------------------------------|
+| `<hash>.narinfo`     | `<hash>.narinfo`                                                     |
+| `nar/<name>`         | `nar/<name>.0000000000000000`, `nar/<name>.0000000000000001`, …      |
 
 `<hash>` and `<name>` consist only of `A-Z a-z 0-9 . _ -`. RADOS names are flat; the `/` in `nar/` is an ordinary character. NAR names are whatever the client uploads, typically `<filehash>.nar.xz` or `<filehash>.nar`.
 
@@ -21,14 +21,33 @@ A cache is a single RADOS pool, using the default namespace. Object names carry 
 
 A name that does not match one of these shapes is foreign. The server never reads or deletes foreign objects.
 
-## Plain objects
+## Narinfo objects
 
-Every object holds the file's bytes verbatim. It has no omap and at most one xattr, `access_count`.
+A narinfo is one object holding the file's bytes verbatim, created exclusively in a single operation: an existing object is never overwritten, and a duplicate upload leaves the stored bytes untouched. It has no omap and at most one xattr, `access_count`. Maximum size is 16 MiB.
 
-`access_count` is a decimal ASCII count of successful GET requests for the object. It is absent until the first GET, and an absent xattr means zero. HEAD and PUT never touch it. It is best-effort: concurrent reads of one object can lose increments. A NAR's count is its downloads. A narinfo's count is queries: Nix GETs a narinfo several times per download and once more when pushing a path that already exists.
+## NAR objects
 
-- Created exclusively in a single operation: an existing object is never overwritten. A duplicate upload leaves the stored bytes untouched.
-- Maximum size is 16 MiB; larger uploads are refused. There is no striping.
+A NAR is split into fixed-size stripes in the layout of Ceph's libradosstriper, restricted to one object per stripe (`stripe_count` 1, `stripe_unit` equal to `object_size`). Stripe `i` is the object `nar/<name>.<i>` with `i` as sixteen lowercase hex digits, and holds bytes `i·S` up to `(i+1)·S` of the file verbatim, where `S` is the stripe size the server was started with (`--stripe-size`, 16 MiB by default). Only the last stripe is shorter. `rados --striper get` reads a whole NAR.
+
+Stripe 0 carries the xattrs:
+
+| xattr                         | value                                   |
+|-------------------------------|-----------------------------------------|
+| `striper.layout.stripe_unit`  | `S`                                     |
+| `striper.layout.stripe_count` | `1`                                     |
+| `striper.layout.object_size`  | `S`                                     |
+| `striper.size`                | total length of the NAR in bytes        |
+| `access_count`                | see below; absent until the first GET   |
+
+Readers take `S` from `striper.layout.object_size`, never from the running server's flag, so NARs written under a different stripe size stay readable.
+
+Stripes 1 and up are written first, each as one full-object write. Stripe 0 is written last, exclusively, with its xattrs and data in a single operation, and is the completion marker: a NAR exists once stripe 0 exists, and a reader never sees a partial NAR. A duplicate upload rewrites identical bytes to stripes 1 and up (NAR names are content hashes) and stops at stripe 0, which is never overwritten. Stripes without a stripe 0 are leftovers from a failed upload; nothing reads them and a future garbage collector may delete them.
+
+`S` must not exceed the cluster's `osd_max_object_size`, and `S` plus the xattrs written with stripe 0 must fit within `osd_max_write_size`; a stripe the OSD refuses fails the upload.
+
+## Access counts
+
+`access_count` is a decimal ASCII count of successful GET requests for the object, kept on a narinfo object or on stripe 0 of a NAR. It is absent until the first GET, and an absent xattr means zero. HEAD and PUT never touch it. It is best-effort: concurrent reads of one object can lose increments. A NAR's count is its downloads. A narinfo's count is queries: Nix GETs a narinfo several times per download and once more when pushing a path that already exists.
 
 ## Integrity
 
@@ -39,14 +58,15 @@ The server stores and verifies no checksums. Nix clients verify NARs against the
 An alternative implementation must:
 
 - name objects exactly as in *Object names* and add no prefix
-- never overwrite an existing object; create exclusively
-- store file bytes verbatim, with no omap and no xattrs other than `access_count`
+- write NARs in the stripe layout above, stripe 0 last and exclusively
+- never overwrite a narinfo or a stripe 0
+- store file bytes verbatim, with no omap and no xattrs other than those listed
 - ignore names it does not recognise
 - treat a missing `access_count` as zero; it may leave the xattr untouched
 
 It must not:
 
-- store metadata in omap, in a manifest object, or in xattrs other than `access_count`
+- store metadata in omap, in a manifest object, or in xattrs other than those listed
 - rely on a cache marker object; there is none
 - store `nix-cache-info` as an object
 
@@ -56,8 +76,8 @@ Substitute the cache's pool.
 
 ```sh
 rados -p nixcache ls
-rados -p nixcache stat 'nar/<name>'
-rados -p nixcache getxattr 'nar/<name>' access_count
+rados -p nixcache --striper get 'nar/<name>' nar.xz
+rados -p nixcache getxattr 'nar/<name>.0000000000000000' striper.size
+rados -p nixcache getxattr 'nar/<name>.0000000000000000' access_count
 rados -p nixcache get '<hash>.narinfo' - | head
-rados -p nixcache get 'nar/<name>' nar.xz
 ```

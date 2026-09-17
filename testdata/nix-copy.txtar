@@ -28,6 +28,16 @@ exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/9sc0rba
 rados-object-count ''
 stdout '^2$'
 
+mkdir bigfixture
+bin-file bigfixture/blob 17000000
+exec nix store add-path --store $WORK/store1 --name big bigfixture
+capture-output BIG
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT $BIG
+rados-object-count nar/
+stdout '^3$'
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $BIG
+cmp bigfixture/blob $WORK/store2$BIG/blob
+
 -- fixture/hello.txt --
 hello from nix-rados-cache
 -- fixture/bin/greet --

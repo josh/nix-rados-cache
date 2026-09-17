@@ -80,6 +80,7 @@ func TestScript(t *testing.T) {
 				Cmds: map[string]func(*testscript.TestScript, bool, []string){
 					"bin-cmp":            cmdBinCmp,
 					"bin-file":           cmdBinFile,
+					"capture-output":     cmdCaptureOutput,
 					"create-pool":        cmdCreatePool,
 					"rados-object-count": cmdRadosObjectCount,
 					"tail-logs":          cmdTailLogs,
@@ -305,6 +306,17 @@ func cmdBinFile(ts *testscript.TestScript, neg bool, args []string) {
 	}
 }
 
+func cmdCaptureOutput(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) != 1 {
+		ts.Fatalf("usage: capture-output <env-var>")
+	}
+	value := strings.TrimSpace(ts.ReadFile("stdout"))
+	if value == "" || strings.ContainsAny(value, "\r\n") {
+		ts.Fatalf("stdout must be exactly one line")
+	}
+	ts.Setenv(args[0], value)
+}
+
 func cmdBinCmp(ts *testscript.TestScript, neg bool, args []string) {
 	if neg || len(args) != 2 {
 		ts.Fatalf("usage: bin-cmp file1 file2")
@@ -422,7 +434,7 @@ run_dir = %[3]s/run
 log_to_file = false
 log_to_stderr = true
 osd_max_object_size = 33554432
-osd_max_write_size = 16
+osd_max_write_size = 32
 osd_pool_default_size = 1
 osd_pool_default_min_size = 1
 osd_crush_chooseleaf_type = 0

@@ -19,4 +19,4 @@ go tool cover -func=cover.out
 
 The server runs as a subprocess of the test binary; it exits cleanly on SIGINT so its coverage is collected. If coverage reports 0%, that flush is broken.
 
-Cover the supported minimal surface (PUT/GET, name validation, the size limit, error mapping) well. Do not add tests for features out of scope for v0.1 or for unreachable error branches (`rados.NewConn` failure, `ListenAndServe` failure, the 400/500 store-error paths).
+Cover the supported minimal surface (PUT/GET, name validation, striping, the narinfo size limit, error mapping) well. Do not add tests for features out of scope for v0.1 or for unreachable error branches (`rados.NewConn` failure, `ListenAndServe` failure, the 400 body-read path).

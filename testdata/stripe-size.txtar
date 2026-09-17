@@ -1,0 +1,34 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --stripe-size 67108864 --log-file server.log &toobig&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+bin-file huge.nar.xz 67108864
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file huge.nar.xz http://127.0.0.1:$PORT/nar/huge.nar.xz
+stdout '^500$'
+wait4log 'msg=request method=PUT path=/nar/huge.nar.xz status=500' server.log
+rados-object-count nar/
+stdout '^0$'
+kill -INT toobig
+wait
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --stripe-size 1048576 --log-file server.log &small&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+bin-file four.nar.xz 3145729
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file four.nar.xz http://127.0.0.1:$PORT/nar/four.nar.xz
+stdout '^201$'
+rados-object-count nar/four
+stdout '^4$'
+kill -INT small
+wait
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec curl --silent --head http://127.0.0.1:$PORT/nar/four.nar.xz
+stdout 'Content-Length: 3145729'
+exec curl --silent --fail --output four-downloaded.nar.xz http://127.0.0.1:$PORT/nar/four.nar.xz
+bin-cmp four.nar.xz four-downloaded.nar.xz
+wait4log 'msg=request method=GET path=/nar/four.nar.xz status=200 .* resp_bytes=3145729 rados_calls=6 access_count=1' server.log

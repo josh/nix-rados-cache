@@ -4,6 +4,9 @@ stderr 'pool is required'
 ! exec nix-rados-cache --pool no-such-pool
 stderr 'open pool'
 
+! exec nix-rados-cache --pool no-such-pool --stripe-size 0
+stderr 'stripe-size'
+
 ! exec nix-rados-cache --pool no-such-pool --log-file $WORK/nonexistent/server.log
 stderr 'open log file'
 
