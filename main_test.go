@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	mathrand "math/rand/v2"
@@ -25,7 +23,7 @@ import (
 	"github.com/rogpeppe/go-internal/testscript"
 )
 
-var cephDaemonLogs *LogDemux
+var cephLogPath string
 
 func TestMain(m *testing.M) {
 	testscript.Main(m, map[string]func(){
@@ -48,14 +46,16 @@ func TestScript(t *testing.T) {
 		t.Cleanup(cancel)
 	}
 
-	cephDaemonLogs = &LogDemux{}
-	var setupBuffer bytes.Buffer
-	detachSetup := cephDaemonLogs.Attach(&setupBuffer)
+	cephLogPath = filepath.Join(t.TempDir(), "ceph.log")
+	cephLog, err := os.Create(cephLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cephLog.Close() }()
 	var confPath string
-	var err error
 	for attempt := 1; attempt <= 2; attempt++ {
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
-		confPath, err = startCephCluster(t, attemptCtx, cephDaemonLogs)
+		confPath, err = startCephCluster(t, attemptCtx, cephLog)
 		if err == nil {
 			t.Cleanup(attemptCancel)
 			break
@@ -63,10 +63,9 @@ func TestScript(t *testing.T) {
 		attemptCancel()
 		t.Logf("ceph cluster startup attempt %d failed: %v", attempt, err)
 	}
-	detachSetup()
 	if err != nil {
-		t.Log("=== Ceph cluster setup logs ===")
-		_, _ = io.Copy(t.Output(), &setupBuffer)
+		logs, _ := os.ReadFile(cephLogPath)
+		t.Logf("=== Ceph cluster setup logs ===\n%s", logs)
 		t.Fatal(err)
 	}
 
@@ -125,72 +124,51 @@ func cmdTailLogs(ts *testscript.TestScript, neg bool, args []string) {
 	if neg {
 		ts.Fatalf("unsupported: ! tail-logs")
 	}
-	pipeReader, detach := cephDaemonLogs.AttachPipe()
-	tailCtx, cancel := context.WithCancel(context.Background())
-
+	var mu sync.Mutex
 	var output bytes.Buffer
-	tailOutput := &LogDemux{}
-	detachOutput := tailOutput.Attach(&output)
-
 	var tailers sync.WaitGroup
-	var serverFile *os.File
+	done := make(chan struct{})
 	ts.Defer(func() {
-		cancel()
-		_ = pipeReader.Close()
-		detach()
+		close(done)
 		tailers.Wait()
-		if serverFile != nil {
-			_ = serverFile.Close()
-		}
-		detachOutput()
 		if output.Len() > 0 {
 			ts.Logf("%s", strings.TrimSuffix(output.String(), "\n"))
 		}
 	})
 
-	tail := func(prefix string, open func() (io.Reader, error)) {
+	tail := func(prefix, path string, fromEnd bool) {
 		defer tailers.Done()
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		var reader *bufio.Reader
-		for {
+		var f *os.File
+		var pending []byte
+		for stop := false; !stop; {
 			select {
-			case <-tailCtx.Done():
-				return
-			case <-ticker.C:
-				if reader == nil {
-					r, err := open()
-					if err != nil {
-						continue
-					}
-					reader = bufio.NewReader(r)
+			case <-done:
+				stop = true
+			case <-time.After(100 * time.Millisecond):
+			}
+			if f == nil {
+				if f, _ = os.Open(path); f == nil {
+					continue
 				}
-				line, err := reader.ReadString('\n')
-				if err != nil {
-					if err == io.EOF {
-						continue
-					}
-					if !errors.Is(err, io.ErrClosedPipe) {
-						_, _ = fmt.Fprintf(tailOutput, "%s tail error: %v\n", prefix, err)
-					}
-					return
+				defer func() { _ = f.Close() }()
+				if fromEnd {
+					_, _ = f.Seek(0, io.SeekEnd)
 				}
-				_, _ = fmt.Fprintf(tailOutput, "%s %s\n", prefix, strings.TrimRight(line, "\n"))
+			}
+			data, _ := io.ReadAll(f)
+			pending = append(pending, data...)
+			for i := bytes.IndexByte(pending, '\n'); i >= 0; i = bytes.IndexByte(pending, '\n') {
+				mu.Lock()
+				_, _ = fmt.Fprintf(&output, "%s %s\n", prefix, pending[:i])
+				mu.Unlock()
+				pending = pending[i+1:]
 			}
 		}
 	}
 
-	serverLog := ts.MkAbs("server.log")
 	tailers.Add(2)
-	go tail("[ceph]", func() (io.Reader, error) { return pipeReader, nil })
-	go tail("[nix-rados-cache]", func() (io.Reader, error) {
-		f, err := os.Open(serverLog)
-		if err != nil {
-			return nil, err
-		}
-		serverFile = f
-		return f, nil
-	})
+	go tail("[ceph]", cephLogPath, true)
+	go tail("[nix-rados-cache]", ts.MkAbs("server.log"), false)
 }
 
 func cmdCreatePool(ts *testscript.TestScript, neg bool, args []string) {
@@ -550,54 +528,4 @@ func checkCephStatus(ctx context.Context, confPath string) (cephStatus, error) {
 	var status cephStatus
 	err = json.Unmarshal(output, &status)
 	return status, err
-}
-
-type LogDemux struct {
-	mu   sync.Mutex
-	outs map[io.Writer]struct{}
-}
-
-func (ld *LogDemux) Write(p []byte) (int, error) {
-	ld.mu.Lock()
-	defer ld.mu.Unlock()
-	for writer := range ld.outs {
-		written, err := writer.Write(p)
-		if err != nil {
-			return 0, err
-		}
-		if written != len(p) {
-			return 0, fmt.Errorf("short write: expected %d, got %d", len(p), written)
-		}
-	}
-	return len(p), nil
-}
-
-func (ld *LogDemux) Attach(writer io.Writer) func() {
-	ld.mu.Lock()
-	if ld.outs == nil {
-		ld.outs = make(map[io.Writer]struct{})
-	}
-	ld.outs[writer] = struct{}{}
-	ld.mu.Unlock()
-	return func() {
-		ld.mu.Lock()
-		delete(ld.outs, writer)
-		ld.mu.Unlock()
-	}
-}
-
-func (ld *LogDemux) AttachPipe() (*io.PipeReader, func()) {
-	pr, pw := io.Pipe()
-	ld.mu.Lock()
-	if ld.outs == nil {
-		ld.outs = make(map[io.Writer]struct{})
-	}
-	ld.outs[pw] = struct{}{}
-	ld.mu.Unlock()
-	return pr, func() {
-		ld.mu.Lock()
-		defer ld.mu.Unlock()
-		delete(ld.outs, pw)
-		_ = pw.Close()
-	}
 }
