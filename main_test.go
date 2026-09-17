@@ -307,10 +307,17 @@ func cmdBinFile(ts *testscript.TestScript, neg bool, args []string) {
 }
 
 func cmdCaptureOutput(ts *testscript.TestScript, neg bool, args []string) {
-	if neg || len(args) != 1 {
-		ts.Fatalf("usage: capture-output <env-var>")
+	if neg || len(args) < 1 || len(args) > 2 {
+		ts.Fatalf("usage: capture-output <env-var> [regexp]")
 	}
 	value := strings.TrimSpace(ts.ReadFile("stdout"))
+	if len(args) == 2 {
+		matches := regexp.MustCompile(args[1]).FindAllStringSubmatch(value, -1)
+		if len(matches) != 1 || len(matches[0]) != 2 {
+			ts.Fatalf("expected exactly one match with one group for %q", args[1])
+		}
+		value = matches[0][1]
+	}
 	if value == "" || strings.ContainsAny(value, "\r\n") {
 		ts.Fatalf("stdout must be exactly one line")
 	}

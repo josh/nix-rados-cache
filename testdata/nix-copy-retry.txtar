@@ -1,0 +1,33 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+mkdir bigfixture
+bin-file bigfixture/blob 17000000
+exec nix store add-path --store $WORK/store1 --name big bigfixture
+capture-output BIG
+exec nix path-info --store $WORK/store1 $BIG
+capture-output HASH /nix/store/([0-9a-z]{32})-big
+
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=none $BIG
+rados-object-count nar/
+stdout '^2$'
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $BIG
+capture-output NAR "url":"(nar/[^"]+)"
+
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL rm $NAR.0000000000000000
+rados-object-count nar/
+stdout '^1$'
+! exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $BIG
+wait4log 'msg=request method=GET path=/nar/[^ ]+ status=404 .* rados_calls=1' server.log
+
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL rm $HASH.narinfo
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=none $BIG
+wait4log 'msg=request method=PUT path=/nar/[^ ]+ status=201 .* rados_calls=2' server.log
+rados-object-count nar/
+stdout '^2$'
+
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $BIG
+cmp bigfixture/blob $WORK/store2$BIG/blob
