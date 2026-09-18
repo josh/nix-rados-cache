@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ceph/go-ceph/rados"
@@ -41,6 +42,7 @@ func main() {
 	stripeSize := flag.Int("stripe-size", 16*1024*1024, "bytes per RADOS object for NARs")
 	caDerivations := flag.Bool("ca-derivations", false, "store realisations of content-addressed derivations")
 	logFile := flag.String("log-file", "", "append logs to this file instead of stderr")
+	shutdownTimeout := flag.Duration("shutdown-timeout", 30*time.Second, "how long in-flight requests may finish after a shutdown signal")
 	flag.Parse()
 
 	var logOut io.Writer = os.Stderr
@@ -69,19 +71,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	srv := &http.Server{Addr: *listen, Handler: newHandler(ioctx, *stripeSize, *caDerivations)}
+	done := make(chan struct{})
 	go func() {
-		c := make(chan os.Signal, 1)
-		signal.Notify(c, os.Interrupt)
-		<-c
+		defer close(done)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		<-ctx.Done()
 		slog.Info("shutting down")
-		os.Exit(0)
+		ctx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			slog.Error("shutdown", "error", err)
+		}
 	}()
 
 	slog.Info("listening", "address", *listen, "pool", *pool, "stripe_size", *stripeSize, "ca_derivations", *caDerivations)
-	if err := http.ListenAndServe(*listen, newHandler(ioctx, *stripeSize, *caDerivations)); err != nil {
+	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
 	}
+	<-done
 }
 
 func openPool(pool string) (*rados.IOContext, error) {
