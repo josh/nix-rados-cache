@@ -58,6 +58,24 @@ stdout '"url":"nar/[0-9a-z]+\.nar\.lzip"'
 exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $C_LZIP
 cmp c-lzip/f.txt $WORK/store2$C_LZIP/f.txt
 
+exec nix store add-path --store $WORK/store1 --name c-compress c-compress
+capture-output C_COMPRESS
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=compress $C_COMPRESS
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $C_COMPRESS
+stdout '"compression":"compress"'
+stdout '"url":"nar/[0-9a-z]+\.nar"'
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $C_COMPRESS
+cmp c-compress/f.txt $WORK/store2$C_COMPRESS/f.txt
+
+exec nix store add-path --store $WORK/store1 --name c-lzma c-lzma
+capture-output C_LZMA
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=lzma $C_LZMA
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $C_LZMA
+stdout '"compression":"lzma"'
+stdout '"url":"nar/[0-9a-z]+\.nar"'
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $C_LZMA
+cmp c-lzma/f.txt $WORK/store2$C_LZMA/f.txt
+
 exec nix store add-path --store $WORK/store1 --name c-none c-none
 capture-output C_NONE
 exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=none $C_NONE
@@ -86,7 +104,7 @@ exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $C
 cmp c-parallel/f.txt $WORK/store2$C_PARALLEL/f.txt
 
 rados-object-count nar/
-stdout '^9$'
+stdout '^11$'
 
 -- c-xz/f.txt --
 codec c-xz
@@ -100,6 +118,10 @@ codec c-zstd
 codec c-br
 -- c-lzip/f.txt --
 codec c-lzip
+-- c-compress/f.txt --
+codec c-compress
+-- c-lzma/f.txt --
+codec c-lzma
 -- c-none/f.txt --
 codec c-none
 -- c-level/f.txt --
