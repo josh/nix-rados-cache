@@ -23,5 +23,20 @@ stderr 'Transferred a partial file'
 wait4log 'msg="read stripe" object=nar/[^ ]+ offset=100' server.log
 ! exists $WORK/store2$CORRUPT
 
+exec nix store add-path --store $WORK/store1 --name codec codec
+capture-output CODEC
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=xz $CODEC
+rados-object-count nar/
+stdout '^2$'
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=zstd $CODEC
+rados-object-count nar/
+stdout '^2$'
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $CODEC
+stdout '"compression":"xz"'
+stdout '"url":"nar/[0-9a-z]+\.nar\.xz"'
+
+
 -- corrupt/f.txt --
 this NAR will be corrupted in the pool
+-- codec/f.txt --
+pushed as xz, then again as zstd
