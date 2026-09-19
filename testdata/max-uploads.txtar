@@ -1,0 +1,27 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --max-uploads 1 --io-timeout 1s --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+bin-file a.nar.xz 4194304
+bin-file b.nar.xz 4194304
+exec curl --silent --limit-rate 2M --write-out '%{http_code}\n' --output /dev/null --upload-file a.nar.xz http://127.0.0.1:$PORT/nar/a.nar.xz &a&
+exec curl --silent --limit-rate 2M --write-out '%{http_code}\n' --output /dev/null --upload-file b.nar.xz http://127.0.0.1:$PORT/nar/b.nar.xz &b&
+! exec curl --silent --fail --max-time 10 --limit-rate 1 --upload-file a.nar.xz http://127.0.0.1:$PORT/nar/queued.nar.xz &queued&
+wait4log 'msg=request method=PUT path=/nar/queued.nar.xz status=500' server.log
+wait queued
+wait a
+stdout '^201$'
+wait b
+stdout '^201$'
+rados-object-count nar/queued
+stdout '^0$'
+
+exec curl --silent --fail --output a-downloaded.nar.xz http://127.0.0.1:$PORT/nar/a.nar.xz
+bin-cmp a.nar.xz a-downloaded.nar.xz
+exec curl --silent --fail --output b-downloaded.nar.xz http://127.0.0.1:$PORT/nar/b.nar.xz
+bin-cmp b.nar.xz b-downloaded.nar.xz
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file a.nar.xz http://127.0.0.1:$PORT/nar/c.nar.xz
+stdout '^201$'

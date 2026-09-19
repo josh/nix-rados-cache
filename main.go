@@ -46,6 +46,7 @@ func main() {
 	logFile := flag.String("log-file", "", "append logs to this file instead of stderr")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 30*time.Second, "how long in-flight requests may finish after a shutdown signal")
 	ioTimeout := flag.Duration("io-timeout", 30*time.Second, "longest pause allowed while reading a request body or writing a response")
+	maxUploads := flag.Int("max-uploads", 8, "uploads handled at once; the rest wait")
 	flag.Parse()
 
 	var logOut io.Writer = os.Stderr
@@ -67,6 +68,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "--stripe-size must be positive")
 		os.Exit(1)
 	}
+	if *maxUploads <= 0 {
+		fmt.Fprintln(os.Stderr, "--max-uploads must be positive")
+		os.Exit(1)
+	}
 
 	ioctx, err := openPool(*pool)
 	if err != nil {
@@ -79,7 +84,7 @@ func main() {
 		slog.Error("listen", "error", err)
 		os.Exit(1)
 	}
-	srv := &http.Server{Handler: newHandler(ioctx, *stripeSize, *caDerivations)}
+	srv := &http.Server{Handler: newHandler(ioctx, *stripeSize, *caDerivations, *maxUploads)}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -263,10 +268,11 @@ func (l idleListener) Accept() (net.Conn, error) {
 type handler struct {
 	ioctx      *rados.IOContext
 	stripeSize int
+	uploads    chan struct{}
 }
 
-func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool) http.Handler {
-	h := &handler{ioctx: ioctx, stripeSize: stripeSize}
+func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool, maxUploads int) http.Handler {
+	h := &handler{ioctx: ioctx, stripeSize: stripeSize, uploads: make(chan struct{}, maxUploads)}
 	mux := http.NewServeMux()
 	if caDerivations {
 		mux.HandleFunc("GET /build-trace-v2/{drv}/{output}", h.getObject)
@@ -442,6 +448,8 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	h.uploads <- struct{}{}
+	defer func() { <-h.uploads }()
 	s := stats(r)
 	var err error
 	if strings.HasPrefix(name, "nar/") {
