@@ -1,0 +1,27 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix store add-path --store $WORK/store1 --name corrupt corrupt
+capture-output CORRUPT
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=zstd $CORRUPT
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $CORRUPT
+capture-output NAR "url":"(nar/[^"]+)"
+capture-output SIZE "downloadSize":([0-9]+)
+bin-file garbage $SIZE
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put $NAR.0000000000000000 garbage
+! exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $CORRUPT
+stderr 'input compression not recognized'
+! exists $WORK/store2$CORRUPT
+
+bin-file short 100
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put $NAR.0000000000000000 short
+! exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $CORRUPT
+stderr 'Transferred a partial file'
+wait4log 'msg="read stripe" object=nar/[^ ]+ offset=100' server.log
+! exists $WORK/store2$CORRUPT
+
+-- corrupt/f.txt --
+this NAR will be corrupted in the pool
