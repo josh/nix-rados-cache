@@ -24,6 +24,7 @@ import (
 const (
 	cacheInfo        = "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n"
 	maxNarinfoSize   = 16 * 1024 * 1024
+	readPiece        = 1024 * 1024
 	accessCountXattr = "access_count"
 	accessedXattr    = "accessed"
 	createdXattr     = "created"
@@ -367,6 +368,10 @@ func (h *handler) getNAR(w http.ResponseWriter, r *http.Request, name string) {
 	}
 	size, _ := strconv.ParseUint(string(xattrs[sizeXattr]), 10, 64)
 	stripeSize, _ := strconv.Atoi(string(xattrs[stripeSizeXattr]))
+	if stripeSize <= 0 {
+		writeStoreError(w, name, fmt.Errorf("bad %s xattr %q", stripeSizeXattr, xattrs[stripeSizeXattr]))
+		return
+	}
 	if r.Method == http.MethodGet {
 		count, err := setAccess(h.ioctx, head, xattrs[accessCountXattr], &s.radosCalls)
 		if err != nil {
@@ -380,18 +385,18 @@ func (h *handler) getNAR(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method == http.MethodHead {
 		return
 	}
-	buf := make([]byte, stripeSize)
-	for i, sent := 0, uint64(0); sent < size; i++ {
+	buf := make([]byte, min(readPiece, stripeSize))
+	for off := uint64(0); off < size; {
 		s.radosCalls++
-		n, err := h.ioctx.Read(stripeName(name, i), buf, 0)
+		n, err := h.ioctx.Read(stripeName(name, int(off/uint64(stripeSize))), buf, off%uint64(stripeSize))
 		if err != nil || n == 0 {
-			slog.Error("read stripe", "object", stripeName(name, i), "error", err)
+			slog.Error("read stripe", "object", name, "offset", off, "error", err)
 			return
 		}
-		sent += uint64(n)
 		if _, err := w.Write(buf[:n]); err != nil {
 			return
 		}
+		off += uint64(n)
 	}
 }
 
@@ -406,13 +411,14 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(name, "nar/") {
 		err = putNAR(h.ioctx, name, r.Body, h.stripeSize, &s.radosCalls)
 	} else {
-		data, rerr := io.ReadAll(io.LimitReader(r.Body, maxNarinfoSize+1))
-		if rerr != nil {
-			http.Error(w, rerr.Error(), http.StatusBadRequest)
+		data, rerr := io.ReadAll(http.MaxBytesReader(w, r.Body, maxNarinfoSize))
+		var tooBig *http.MaxBytesError
+		if errors.As(rerr, &tooBig) {
+			http.Error(w, "object too large", http.StatusRequestEntityTooLarge)
 			return
 		}
-		if len(data) > maxNarinfoSize {
-			http.Error(w, "object too large", http.StatusRequestEntityTooLarge)
+		if rerr != nil {
+			http.Error(w, rerr.Error(), http.StatusBadRequest)
 			return
 		}
 		var sigs []string

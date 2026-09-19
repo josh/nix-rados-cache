@@ -32,3 +32,8 @@ stdout 'Content-Length: 3145729'
 exec curl --silent --fail --output four-downloaded.nar.xz http://127.0.0.1:$PORT/nar/four.nar.xz
 bin-cmp four.nar.xz four-downloaded.nar.xz
 wait4log 'msg=request method=GET path=/nar/four.nar.xz status=200 .* resp_bytes=3145729 rados_calls=6 access_count=1' server.log
+
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL setxattr nar/four.nar.xz.0000000000000000 striper.layout.object_size 0
+exec curl --silent --write-out '%{http_code}' --output /dev/null http://127.0.0.1:$PORT/nar/four.nar.xz
+stdout '^500$'
+wait4log 'msg=request method=GET path=/nar/four.nar.xz status=500' server.log

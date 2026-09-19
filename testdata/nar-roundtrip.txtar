@@ -45,7 +45,7 @@ exec curl --silent --head http://127.0.0.1:$PORT/nar/big.nar.xz
 stdout 'Content-Length: 33554433'
 exec curl --silent --fail --output big-downloaded.nar.xz http://127.0.0.1:$PORT/nar/big.nar.xz
 bin-cmp big.nar.xz big-downloaded.nar.xz
-wait4log 'msg=request method=GET path=/nar/big.nar.xz status=200 .* rados_calls=5 access_count=1' server.log
+wait4log 'msg=request method=GET path=/nar/big.nar.xz status=200 .* rados_calls=35 access_count=1' server.log
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL --striper get nar/big.nar.xz big-striped.nar.xz
 bin-cmp big.nar.xz big-striped.nar.xz
 rados-object-count nar/big
