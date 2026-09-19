@@ -36,7 +36,22 @@ stdout '"compression":"xz"'
 stdout '"url":"nar/[0-9a-z]+\.nar\.xz"'
 
 
+exec nix store add-path --store $WORK/store1 --name sized sized
+capture-output SIZED
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=bzip2 $SIZED
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $SIZED
+capture-output SIZED_NAR "url":"(nar/[^"]+)"
+capture-output SIZED_FILE "downloadSize":([0-9]+)
+capture-output SIZED_NAR_SIZE "narSize":([0-9]+)
+exec curl --silent --head http://127.0.0.1:$PORT/$SIZED_NAR
+stdout Content-Length:.$SIZED_FILE
+! stdout Content-Length:.$SIZED_NAR_SIZE
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr $SIZED_NAR.0000000000000000 striper.size
+stdout ^$SIZED_FILE$
+
 -- corrupt/f.txt --
 this NAR will be corrupted in the pool
 -- codec/f.txt --
 pushed as xz, then again as zstd
+-- sized/f.txt --
+compressed size differs from NAR size, and this line pads it out so bzip2 has something to squeeze
