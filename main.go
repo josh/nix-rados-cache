@@ -290,12 +290,8 @@ func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool, maxU
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		mux.ServeHTTP(sw, r)
-		attrs := []any{"method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start),
-			"req_bytes", r.ContentLength, "resp_bytes", sw.bytes, "rados_calls", sw.stats.radosCalls}
-		if sw.stats.accessCount > 0 {
-			attrs = append(attrs, "access_count", sw.stats.accessCount)
-		}
-		slog.Info("request", attrs...)
+		slog.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start),
+			"req_bytes", r.ContentLength, "resp_bytes", sw.bytes, "rados_calls", sw.stats.radosCalls, "access_count", sw.stats.accessCount)
 	})
 }
 
