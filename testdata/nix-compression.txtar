@@ -103,9 +103,74 @@ stdout '"url":"nar/[0-9a-z]+\.nar\.zst"'
 exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $C_PARALLEL
 cmp c-parallel/f.txt $WORK/store2$C_PARALLEL/f.txt
 
-rados-object-count nar/
-stdout '^11$'
+exec nix store add-path --store $WORK/store1 --name c-zstd-19 c-zstd-19
+capture-output C_ZSTD_19
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=zstd&compression-level=19 $C_ZSTD_19
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $C_ZSTD_19
+stdout '"compression":"zstd"'
+stdout '"url":"nar/[0-9a-z]+\.nar\.zst"'
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $C_ZSTD_19
+cmp c-zstd-19/f.txt $WORK/store2$C_ZSTD_19/f.txt
 
+exec nix store add-path --store $WORK/store1 --name c-gzip-9 c-gzip-9
+capture-output C_GZIP_9
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=gzip&compression-level=9 $C_GZIP_9
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $C_GZIP_9
+stdout '"compression":"gzip"'
+stdout '"url":"nar/[0-9a-z]+\.nar"'
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $C_GZIP_9
+cmp c-gzip-9/f.txt $WORK/store2$C_GZIP_9/f.txt
+
+exec nix store add-path --store $WORK/store1 --name c-bzip2-9 c-bzip2-9
+capture-output C_BZIP2_9
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=bzip2&compression-level=9 $C_BZIP2_9
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $C_BZIP2_9
+stdout '"compression":"bzip2"'
+stdout '"url":"nar/[0-9a-z]+\.nar\.bz2"'
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $C_BZIP2_9
+cmp c-bzip2-9/f.txt $WORK/store2$C_BZIP2_9/f.txt
+
+exec nix store add-path --store $WORK/store1 --name c-br-11 c-br-11
+capture-output C_BR_11
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=br&compression-level=11 $C_BR_11
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $C_BR_11
+stdout '"compression":"br"'
+stdout '"url":"nar/[0-9a-z]+\.nar\.br"'
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $C_BR_11
+cmp c-br-11/f.txt $WORK/store2$C_BR_11/f.txt
+
+exec nix store add-path --store $WORK/store1 --name c-xz-parallel c-xz-parallel
+capture-output C_XZ_PARALLEL
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=xz&parallel-compression=true $C_XZ_PARALLEL
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $C_XZ_PARALLEL
+stdout '"compression":"xz"'
+stdout '"url":"nar/[0-9a-z]+\.nar\.xz"'
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $C_XZ_PARALLEL
+cmp c-xz-parallel/f.txt $WORK/store2$C_XZ_PARALLEL/f.txt
+
+mkdir c-big
+bin-file c-big/blob 17000000
+exec nix store add-path --store $WORK/store1 --name c-big c-big
+capture-output C_BIG
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=zstd $C_BIG
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $C_BIG
+stdout '"compression":"zstd"'
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $C_BIG
+cmp c-big/blob $WORK/store2$C_BIG/blob
+
+rados-object-count nar/
+stdout '^18$'
+
+-- c-zstd-19/f.txt --
+codec c-zstd-19
+-- c-gzip-9/f.txt --
+codec c-gzip-9
+-- c-bzip2-9/f.txt --
+codec c-bzip2-9
+-- c-br-11/f.txt --
+codec c-br-11
+-- c-xz-parallel/f.txt --
+codec c-xz-parallel
 -- c-xz/f.txt --
 codec c-xz
 -- c-bzip2/f.txt --
