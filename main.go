@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -44,6 +45,7 @@ func main() {
 	caDerivations := flag.Bool("ca-derivations", false, "store realisations of content-addressed derivations")
 	logFile := flag.String("log-file", "", "append logs to this file instead of stderr")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 30*time.Second, "how long in-flight requests may finish after a shutdown signal")
+	ioTimeout := flag.Duration("io-timeout", 30*time.Second, "longest pause allowed while reading a request body or writing a response")
 	flag.Parse()
 
 	var logOut io.Writer = os.Stderr
@@ -72,7 +74,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := &http.Server{Addr: *listen, Handler: newHandler(ioctx, *stripeSize, *caDerivations)}
+	ln, err := net.Listen("tcp", *listen)
+	if err != nil {
+		slog.Error("listen", "error", err)
+		os.Exit(1)
+	}
+	srv := &http.Server{Handler: newHandler(ioctx, *stripeSize, *caDerivations)}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -88,7 +95,7 @@ func main() {
 	}()
 
 	slog.Info("listening", "address", *listen, "pool", *pool, "stripe_size", *stripeSize, "ca_derivations", *caDerivations)
-	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+	if err := srv.Serve(idleListener{ln, *ioTimeout}); !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
 	}
@@ -223,6 +230,34 @@ func setAccess(ioctx *rados.IOContext, name string, prev []byte, calls *int) (ui
 	op.SetXattr(accessedXattr, now())
 	*calls++
 	return count, op.Operate(ioctx, name, rados.OperationNoFlag)
+}
+
+type idleConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+func (c idleConn) Read(p []byte) (int, error) {
+	_ = c.SetReadDeadline(time.Now().Add(c.timeout))
+	return c.Conn.Read(p)
+}
+
+func (c idleConn) Write(p []byte) (int, error) {
+	_ = c.SetWriteDeadline(time.Now().Add(c.timeout))
+	return c.Conn.Write(p)
+}
+
+type idleListener struct {
+	net.Listener
+	timeout time.Duration
+}
+
+func (l idleListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return idleConn{c, l.timeout}, nil
 }
 
 type handler struct {
@@ -394,6 +429,7 @@ func (h *handler) getNAR(w http.ResponseWriter, r *http.Request, name string) {
 			return
 		}
 		if _, err := w.Write(buf[:n]); err != nil {
+			slog.Error("write response", "object", name, "error", err)
 			return
 		}
 		off += uint64(n)
