@@ -289,32 +289,30 @@ func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool, maxU
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		var s reqStats
-		mux.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), ctxKey{}, &s)))
+		mux.ServeHTTP(sw, r)
 		attrs := []any{"method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start),
-			"req_bytes", r.ContentLength, "resp_bytes", sw.bytes, "rados_calls", s.radosCalls}
-		if s.accessCount > 0 {
-			attrs = append(attrs, "access_count", s.accessCount)
+			"req_bytes", r.ContentLength, "resp_bytes", sw.bytes, "rados_calls", sw.stats.radosCalls}
+		if sw.stats.accessCount > 0 {
+			attrs = append(attrs, "access_count", sw.stats.accessCount)
 		}
 		slog.Info("request", attrs...)
 	})
 }
-
-type ctxKey struct{}
 
 type reqStats struct {
 	radosCalls  int
 	accessCount uint64
 }
 
-func stats(r *http.Request) *reqStats {
-	return r.Context().Value(ctxKey{}).(*reqStats)
+func stats(w http.ResponseWriter) *reqStats {
+	return &w.(*statusWriter).stats
 }
 
 type statusWriter struct {
 	http.ResponseWriter
 	status int
 	bytes  int
+	stats  reqStats
 }
 
 func (w *statusWriter) WriteHeader(status int) {
@@ -370,13 +368,13 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 		h.getNAR(w, r, name)
 		return
 	}
-	data, err := getObject(h.ioctx, name, &stats(r).radosCalls)
+	data, err := getObject(h.ioctx, name, &stats(w).radosCalls)
 	if err != nil {
 		writeStoreError(w, name, err)
 		return
 	}
 	if r.Method == http.MethodGet {
-		s := stats(r)
+		s := stats(w)
 		s.radosCalls++
 		xattrs, _ := h.ioctx.ListXattrs(name)
 		count, err := setAccess(h.ioctx, name, xattrs[accessCountXattr], &s.radosCalls)
@@ -399,7 +397,7 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) getNAR(w http.ResponseWriter, r *http.Request, name string) {
-	s := stats(r)
+	s := stats(w)
 	head := stripeName(name, 0)
 	s.radosCalls++
 	xattrs, err := h.ioctx.ListXattrs(head)
@@ -450,7 +448,7 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 	}
 	h.uploads <- struct{}{}
 	defer func() { <-h.uploads }()
-	s := stats(r)
+	s := stats(w)
 	var err error
 	if strings.HasPrefix(name, "nar/") {
 		err = putNAR(h.ioctx, name, r.Body, h.stripeSize, &s.radosCalls)
