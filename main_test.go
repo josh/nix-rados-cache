@@ -10,6 +10,7 @@ import (
 	mathrand "math/rand/v2"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -99,6 +100,7 @@ func TestScript(t *testing.T) {
 					"bin-file":           cmdBinFile,
 					"capture-output":     cmdCaptureOutput,
 					"create-pool":        cmdCreatePool,
+					"http-hold":          cmdHTTPHold,
 					"rados-object-count": cmdRadosObjectCount,
 					"tail-logs":          cmdTailLogs,
 					"wait4http":          cmdWait4HTTP,
@@ -322,6 +324,23 @@ func cmdCaptureOutput(ts *testscript.TestScript, neg bool, args []string) {
 		ts.Fatalf("stdout must be exactly one line")
 	}
 	ts.Setenv(args[0], value)
+}
+
+func cmdHTTPHold(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) != 2 {
+		ts.Fatalf("usage: http-hold <url> <content-length>")
+	}
+	u, err := url.Parse(args[0])
+	if err != nil {
+		ts.Fatalf("invalid url: %v", err)
+	}
+	conn, err := net.Dial("tcp", u.Host)
+	if err != nil {
+		ts.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	_, _ = fmt.Fprintf(conn, "PUT %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %s\r\n\r\n", u.RequestURI(), u.Host, args[1])
+	_, _ = io.Copy(io.Discard, conn)
 }
 
 func cmdBinCmp(ts *testscript.TestScript, neg bool, args []string) {

@@ -8,9 +8,8 @@ bin-file a.nar.xz 4194304
 bin-file b.nar.xz 4194304
 exec curl --silent --limit-rate 2M --write-out '%{http_code}\n' --output /dev/null --upload-file a.nar.xz http://127.0.0.1:$PORT/nar/a.nar.xz &a&
 exec curl --silent --limit-rate 2M --write-out '%{http_code}\n' --output /dev/null --upload-file b.nar.xz http://127.0.0.1:$PORT/nar/b.nar.xz &b&
-! exec curl --silent --fail --max-time 10 --limit-rate 1 --upload-file a.nar.xz http://127.0.0.1:$PORT/nar/queued.nar.xz &queued&
+http-hold http://127.0.0.1:$PORT/nar/queued.nar.xz 1000
 wait4log 'msg=request method=PUT path=/nar/queued.nar.xz status=500' server.log
-wait queued
 wait a
 stdout '^201$'
 wait b

@@ -13,7 +13,7 @@ wait4log 'msg="write response" object=nar/big.nar.xz error=".*i/o timeout' serve
 exec curl --silent --fail --output downloaded.nar.xz http://127.0.0.1:$PORT/nar/big.nar.xz
 bin-cmp big.nar.xz downloaded.nar.xz
 
-! exec curl --silent --fail --max-time 3 --limit-rate 1 --upload-file big.nar.xz http://127.0.0.1:$PORT/nar/stalled.nar.xz
+http-hold http://127.0.0.1:$PORT/nar/stalled.nar.xz 1000
 wait4log 'msg=request method=PUT path=/nar/stalled.nar.xz status=500' server.log
 wait4log 'object=nar/stalled.nar.xz error=".*i/o timeout' server.log
 rados-object-count nar/stalled
