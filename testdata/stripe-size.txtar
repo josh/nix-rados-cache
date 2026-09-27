@@ -8,8 +8,8 @@ bin-file huge.nar.xz 67108864
 exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file huge.nar.xz http://127.0.0.1:$PORT/nar/huge.nar.xz
 stdout '^500$'
 wait4log 'msg=request method=PUT path=/nar/huge.nar.xz status=500' server.log
-rados-object-count nar/
-stdout '^0$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+! stdout '^nar/'
 kill -INT toobig
 wait
 
@@ -19,8 +19,8 @@ wait4http http://127.0.0.1:$PORT/nix-cache-info
 bin-file four.nar.xz 3145729
 exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file four.nar.xz http://127.0.0.1:$PORT/nar/four.nar.xz
 stdout '^201$'
-rados-object-count nar/four
-stdout '^4$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=4 '^nar/four'
 kill -INT small
 wait
 

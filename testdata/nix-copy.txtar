@@ -9,10 +9,10 @@ stdout '^/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello$'
 
 exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
 
-rados-object-count nar/
-stdout '^1$'
-rados-object-count ''
-stdout '^2$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^nar/'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=2 '^.'
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr 9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo access_count
 stdout '^[1-9][0-9]*$'
 
@@ -25,16 +25,16 @@ wait4log 'msg=request method=GET path=/nar/[^ ]+ status=200 .* access_count=2' s
 
 exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
 
-rados-object-count ''
-stdout '^2$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=2 '^.'
 
 mkdir bigfixture
 bin-file bigfixture/blob 17000000
 exec nix store add-path --store $WORK/store1 --name big bigfixture
 capture-output BIG
 exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT $BIG
-rados-object-count nar/
-stdout '^3$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=3 '^nar/'
 exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $BIG
 cmp bigfixture/blob $WORK/store2$BIG/blob
 

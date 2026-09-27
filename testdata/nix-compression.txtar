@@ -95,8 +95,8 @@ stdout '"compression":"zstd"'
 exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $C_BIG
 cmp c-big/blob $WORK/store2$C_BIG/blob
 
-rados-object-count nar/
-stdout '^11$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=11 '^nar/'
 
 -- c-xz/f.txt --
 codec c-xz

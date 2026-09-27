@@ -18,8 +18,8 @@ stderr 'not supported'
 
 exec nix path-info --store http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
 stdout '^/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello$'
-rados-object-count ''
-stdout '^2$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=2 '^.'
 
 -- fixture/hello.txt --
 hello from nix-rados-cache

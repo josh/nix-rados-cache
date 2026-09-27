@@ -10,5 +10,5 @@ exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file b
 stdout '^413$'
 wait4log 'msg=request method=PUT path=/big.narinfo status=413 .* rados_calls=0' server.log
 
-rados-object-count ''
-stdout '^0$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+! stdout '^.'
