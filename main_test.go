@@ -17,7 +17,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -145,51 +144,22 @@ func cmdTailLogs(ts *testscript.TestScript, neg bool, args []string) {
 	if neg {
 		ts.Fatalf("unsupported: ! tail-logs")
 	}
-	var mu sync.Mutex
-	var output bytes.Buffer
-	var tailers sync.WaitGroup
-	done := make(chan struct{})
+	cephLog, err := os.Open(cephLogPath)
+	ts.Check(err)
 	ts.Defer(func() {
-		close(done)
-		tailers.Wait()
-		if output.Len() > 0 {
-			ts.Logf("%s", strings.TrimSuffix(output.String(), "\n"))
+		defer func() { _ = cephLog.Close() }()
+		log := func(prefix string, data []byte) {
+			for line := range bytes.Lines(data) {
+				ts.Logf("%s %s", prefix, bytes.TrimSuffix(line, []byte("\n")))
+			}
 		}
+		data, _ := io.ReadAll(cephLog)
+		log("[ceph]", data)
+		data, _ = os.ReadFile(ts.MkAbs("server.log"))
+		log("[nix-rados-cache]", data)
 	})
-
-	tail := func(prefix, path string, fromEnd bool) {
-		defer tailers.Done()
-		var f *os.File
-		var pending []byte
-		for stop := false; !stop; {
-			select {
-			case <-done:
-				stop = true
-			case <-time.After(100 * time.Millisecond):
-			}
-			if f == nil {
-				if f, _ = os.Open(path); f == nil {
-					continue
-				}
-				defer func() { _ = f.Close() }()
-				if fromEnd {
-					_, _ = f.Seek(0, io.SeekEnd)
-				}
-			}
-			data, _ := io.ReadAll(f)
-			pending = append(pending, data...)
-			for i := bytes.IndexByte(pending, '\n'); i >= 0; i = bytes.IndexByte(pending, '\n') {
-				mu.Lock()
-				_, _ = fmt.Fprintf(&output, "%s %s\n", prefix, pending[:i])
-				mu.Unlock()
-				pending = pending[i+1:]
-			}
-		}
-	}
-
-	tailers.Add(2)
-	go tail("[ceph]", cephLogPath, true)
-	go tail("[nix-rados-cache]", ts.MkAbs("server.log"), false)
+	_, err = cephLog.Seek(0, io.SeekEnd)
+	ts.Check(err)
 }
 
 func cmdCreatePool(ts *testscript.TestScript, neg bool, args []string) {
