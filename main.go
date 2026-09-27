@@ -155,6 +155,7 @@ func putObject(ioctx *rados.IOContext, name string, data []byte, calls *int) err
 	defer op.Release()
 	op.Create(rados.CreateExclusive)
 	op.SetXattr(createdXattr, now())
+	stampAccess(op, 1)
 	op.WriteFull(data)
 	*calls++
 	return op.Operate(ioctx, name, rados.OperationNoFlag)
@@ -229,20 +230,29 @@ func putNAR(ioctx *rados.IOContext, name string, body io.Reader, stripeSize int,
 	op.SetXattr(stripeSizeXattr, size)
 	op.SetXattr(sizeXattr, []byte(strconv.Itoa(total)))
 	op.SetXattr(createdXattr, now())
+	stampAccess(op, 1)
 	op.WriteFull(first)
 	*calls++
 	return op.Operate(ioctx, stripeName(name, 0), rados.OperationNoFlag)
 }
 
-func setAccess(ioctx *rados.IOContext, name string, prev []byte, calls *int) (uint64, error) {
-	count, _ := strconv.ParseUint(string(prev), 10, 64)
+func stampAccess(op *rados.WriteOp, count uint64) {
+	op.SetXattr(accessCountXattr, []byte(strconv.FormatUint(count, 10)))
+	op.SetXattr(accessedXattr, now())
+}
+
+func (h *handler) setAccess(name string, s *reqStats) {
+	s.radosCalls += 2
+	xattrs, _ := h.ioctx.ListXattrs(name)
+	count, _ := strconv.ParseUint(string(xattrs[accessCountXattr]), 10, 64)
 	count++
 	op := rados.CreateWriteOp()
 	defer op.Release()
-	op.SetXattr(accessCountXattr, []byte(strconv.FormatUint(count, 10)))
-	op.SetXattr(accessedXattr, now())
-	*calls++
-	return count, op.Operate(ioctx, name, rados.OperationNoFlag)
+	stampAccess(op, count)
+	if err := op.Operate(h.ioctx, name, rados.OperationNoFlag); err != nil {
+		slog.Error("access count", "object", name, "error", err)
+	}
+	s.accessCount = count
 }
 
 type idleConn struct {
@@ -377,16 +387,7 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, name, err)
 		return
 	}
-	if r.Method == http.MethodGet {
-		s := stats(w)
-		s.radosCalls++
-		xattrs, _ := h.ioctx.ListXattrs(name)
-		count, err := setAccess(h.ioctx, name, xattrs[accessCountXattr], &s.radosCalls)
-		if err != nil {
-			slog.Error("access count", "object", name, "error", err)
-		}
-		s.accessCount = count
-	}
+	h.setAccess(name, stats(w))
 	contentType := "text/x-nix-narinfo"
 	switch {
 	case strings.HasSuffix(name, ".ls") || strings.HasPrefix(name, "build-trace-v2/"):
@@ -420,13 +421,7 @@ func (h *handler) getNAR(w http.ResponseWriter, r *http.Request, name string) {
 		writeStoreError(w, name, fmt.Errorf("bad %s xattr %q", stripeSizeXattr, xattrs[stripeSizeXattr]))
 		return
 	}
-	if r.Method == http.MethodGet {
-		count, err := setAccess(h.ioctx, head, xattrs[accessCountXattr], &s.radosCalls)
-		if err != nil {
-			slog.Error("access count", "object", name, "error", err)
-		}
-		s.accessCount = count
-	}
+	h.setAccess(head, s)
 	w.Header().Set("Content-Type", "application/x-nix-nar")
 	w.Header().Set("Content-Length", strconv.FormatUint(size, 10))
 	w.WriteHeader(http.StatusOK)
@@ -487,6 +482,10 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case errors.Is(err, rados.ErrObjectExists):
+		if strings.HasPrefix(name, "nar/") {
+			name = stripeName(name, 0)
+		}
+		h.setAccess(name, s)
 		w.WriteHeader(http.StatusOK)
 	case err != nil:
 		writeStoreError(w, name, err)
