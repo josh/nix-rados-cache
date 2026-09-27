@@ -1,0 +1,39 @@
+tail-logs
+create-pool
+env UP_POOL=$NIX_RADOS_CACHE_POOL
+create-pool
+
+exec nix-rados-cache --pool $UP_POOL --listen 127.0.0.1:$PORT2 --log-file upstream.log &upstream&
+wait4http http://127.0.0.1:$PORT2/nix-cache-info
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --upstream http://127.0.0.1:1 --upstream http://127.0.0.1:$PORT2 --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+mkdir bigfixture
+bin-file bigfixture/blob 17000000
+exec nix store add-path --store $WORK/store1 --name big bigfixture
+capture-output BIG
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT2?compression=none $BIG
+
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $BIG
+cmp bigfixture/blob $WORK/store2$BIG/blob
+wait4log 'level=WARN msg=upstream url=http://127.0.0.1:1 .*connection refused' server.log
+wait4log 'msg=pulled object=nar/[^ ]+ upstream=http://127.0.0.1:[0-9]+' server.log
+rados-object-count nar/
+stdout '^2$'
+
+kill -INT server
+wait server
+create-pool
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --upstream http://127.0.0.1:$PORT2 --stripe-size 67108864 --log-file server.log &oversized&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+mkdir hugefixture
+bin-file hugefixture/blob 41943040
+exec nix store add-path --store $WORK/store1 --name huge hugefixture
+capture-output HUGE
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT2?compression=none $HUGE
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store3 $HUGE
+cmp hugefixture/blob $WORK/store3$HUGE/blob
+wait4log 'msg="store pulled object" object=nar/[^ ]+' server.log
+rados-object-count nar/
+stdout '^0$'

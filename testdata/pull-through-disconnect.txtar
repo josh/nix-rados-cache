@@ -1,0 +1,26 @@
+tail-logs
+create-pool
+env UP_POOL=$NIX_RADOS_CACHE_POOL
+create-pool
+
+exec nix-rados-cache --pool $UP_POOL --listen 127.0.0.1:$PORT2 --log-file upstream.log &upstream&
+wait4http http://127.0.0.1:$PORT2/nix-cache-info
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --upstream http://127.0.0.1:$PORT2 --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+mkdir bigfixture
+bin-file bigfixture/blob 17000000
+exec nix store add-path --store $WORK/store1 --name big bigfixture
+capture-output BIG
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT2?compression=none $BIG
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $BIG
+capture-output NAR "url":"(nar/[^"]+)"
+
+! exec curl --silent --max-time 1 --limit-rate 1M --output /dev/null http://127.0.0.1:$PORT/$NAR
+wait4log 'msg=pulled object=nar/[^ ]+ upstream=http://127.0.0.1:[0-9]+' server.log
+rados-object-count nar/
+stdout '^2$'
+
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $BIG
+cmp bigfixture/blob $WORK/store2$BIG/blob
+wait4log 'msg=request method=GET path=/nar/[^ ]+ status=200 .* upstream=""' server.log
