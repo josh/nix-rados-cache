@@ -386,10 +386,10 @@ func (h *handler) pullNAR(w http.ResponseWriter, r *http.Request, name string, s
 	return true
 }
 
-func (h *handler) pullPlain(name string, s *reqStats) error {
+func (h *handler) pullPlain(name string, s *reqStats) ([]byte, error) {
 	resp, u := h.fetch(http.MethodGet, name)
 	if resp == nil {
-		return rados.ErrNotFound
+		return nil, rados.ErrNotFound
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxNarinfoSize))
@@ -397,10 +397,10 @@ func (h *handler) pullPlain(name string, s *reqStats) error {
 		err = putObject(h.ioctx, name, body, u, &s.radosCalls)
 	}
 	if err != nil && !errors.Is(err, rados.ErrObjectExists) {
-		return err
+		return nil, err
 	}
 	s.upstream = u
-	return nil
+	return body, nil
 }
 
 func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool, maxUploads int, upstreams []string, ioTimeout time.Duration) http.Handler {
@@ -496,9 +496,7 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 	s := stats(w)
 	data, err := getObject(h.ioctx, name, &s.radosCalls)
 	if errors.Is(err, rados.ErrNotFound) && strings.HasSuffix(name, ".narinfo") {
-		if err = h.pullPlain(name, s); err == nil {
-			data, err = getObject(h.ioctx, name, &s.radosCalls)
-		}
+		data, err = h.pullPlain(name, s)
 	}
 	if err != nil {
 		writeStoreError(w, name, err)
