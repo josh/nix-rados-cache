@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -131,13 +132,20 @@ func TestScript(t *testing.T) {
 	}
 }
 
+var ports sync.Map
+
 func getFreePort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
+	for {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return 0, err
+		}
+		port := listener.Addr().(*net.TCPAddr).Port
+		_ = listener.Close()
+		if _, used := ports.LoadOrStore(port, true); !used {
+			return port, nil
+		}
 	}
-	defer func() { _ = listener.Close() }()
-	return listener.Addr().(*net.TCPAddr).Port, nil
 }
 
 func cmdTailLogs(ts *testscript.TestScript, neg bool, args []string) {
