@@ -198,8 +198,13 @@ func putNAR(ioctx *rados.IOContext, name string, body io.Reader, stripeSize int,
 	buf := make([]byte, stripeSize)
 	total := 0
 	for i := 0; ; i++ {
-		n, err := io.ReadFull(body, buf)
-		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		n, err := 0, error(nil)
+		for n < stripeSize && err == nil {
+			var m int
+			m, err = body.Read(buf[n:])
+			n += m
+		}
+		if err != nil && err != io.EOF {
 			return err
 		}
 		total += n

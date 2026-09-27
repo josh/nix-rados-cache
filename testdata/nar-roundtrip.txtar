@@ -66,3 +66,9 @@ exec curl --silent --fail --output exact-downloaded.nar.xz http://127.0.0.1:$POR
 bin-cmp exact.nar.xz exact-downloaded.nar.xz
 rados-object-count nar/exact
 stdout '^1$'
+
+! exec curl --silent --max-time 1 --request PUT --header 'Content-Length: 1000' --data-binary abc http://127.0.0.1:$PORT/nar/short.nar.xz
+wait4log 'msg=request method=PUT path=/nar/short.nar.xz status=500' server.log
+wait4log 'object=nar/short.nar.xz error="unexpected EOF"' server.log
+rados-object-count nar/short
+stdout '^0$'
