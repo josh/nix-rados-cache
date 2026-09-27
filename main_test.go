@@ -479,7 +479,7 @@ func startCephMon(t *testing.T, ctx context.Context, confPath string, out io.Wri
 }
 
 func startCephOsd(t *testing.T, ctx context.Context, confPath string, out io.Writer) error {
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		osdID := strconv.Itoa(i)
 		osdUUID := randomUUID()
 		if err := runCeph(ctx, confPath, "osd", "new", osdUUID, osdID); err != nil {
@@ -498,7 +498,7 @@ func startCephOsd(t *testing.T, ctx context.Context, confPath string, out io.Wri
 	if err := waitForCeph(ctx, confPath, func(status cephStatus) bool { return status.Osdmap.NumUpOsds >= 3 }); err != nil {
 		return err
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := runCeph(ctx, confPath, "osd", "crush", "create-or-move", "osd."+strconv.Itoa(i), "1.0", "root=default", "host=localhost"); err != nil {
 			return err
 		}
