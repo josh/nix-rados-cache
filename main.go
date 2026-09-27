@@ -413,7 +413,7 @@ func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool, maxU
 		mux.HandleFunc("PUT /build-trace-v2/{drv}/{output}", h.putObject)
 	}
 	mux.HandleFunc("GET /nix-cache-info", h.getCacheInfo)
-	mux.HandleFunc("PUT /nix-cache-info", h.putCacheInfo)
+	mux.HandleFunc("PUT /nix-cache-info", func(http.ResponseWriter, *http.Request) {})
 	mux.HandleFunc("GET /nar/{name}", h.getObject)
 	mux.HandleFunc("PUT /nar/{name}", h.putObject)
 	mux.HandleFunc("GET /log/{name}", h.getObject)
@@ -460,10 +460,6 @@ func (w *statusWriter) Write(p []byte) (int, error) {
 func (h *handler) getCacheInfo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/x-nix-cache-info")
 	_, _ = io.WriteString(w, cacheInfo)
-}
-
-func (h *handler) putCacheInfo(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
 }
 
 func objectName(r *http.Request) (string, bool) {
