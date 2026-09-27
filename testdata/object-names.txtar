@@ -36,16 +36,16 @@ stdout '^201$'
 exec curl --silent --compressed --dump-header zstd.txt --output big.out http://127.0.0.1:$PORT/log/big.drv
 grep 'Content-Encoding: zstd' zstd.txt
 grep 'Vary: Accept-Encoding' zstd.txt
-bin-cmp big.log big.out
+cmp big.log big.out
 exec curl --silent -H 'Accept-Encoding: gzip' --dump-header gzip.txt --output gzip.out http://127.0.0.1:$PORT/log/big.drv
 ! grep 'Content-Encoding' gzip.txt
-bin-cmp big.log gzip.out
+cmp big.log gzip.out
 exec curl --silent --head --compressed http://127.0.0.1:$PORT/log/big.drv
 stdout 'Content-Encoding: zstd'
 ! stdout 'Content-Length: 4096'
 exec curl --silent --dump-header plain.txt --output plain.out http://127.0.0.1:$PORT/log/big.drv
 ! grep 'Content-Encoding' plain.txt
-bin-cmp big.log plain.out
+cmp big.log plain.out
 exec curl --silent --compressed --dump-header small.txt --output /dev/null http://127.0.0.1:$PORT/log/abc123-hello.drv
 ! grep 'Content-Encoding' small.txt
 

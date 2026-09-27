@@ -16,7 +16,7 @@ wait4log 'msg=request method=PUT path=/nar/slow.nar.xz status=201' server.log
 exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --shutdown-timeout 1s --log-file server.log &short&
 wait4http http://127.0.0.1:$PORT/nix-cache-info
 exec curl --silent --fail --output downloaded.nar.xz http://127.0.0.1:$PORT/nar/slow.nar.xz
-bin-cmp slow.nar.xz downloaded.nar.xz
+cmp slow.nar.xz downloaded.nar.xz
 
 bin-file stall.nar.xz 1048576
 ! exec curl --silent --limit-rate 100k --trace-ascii stall.txt --output /dev/null --upload-file stall.nar.xz http://127.0.0.1:$PORT/nar/stall.nar.xz &stall&

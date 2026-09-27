@@ -20,7 +20,7 @@ exec nix store dump-path --store http://127.0.0.1:$PORT /nix/store/9sc0rbaa4s1sn
 cp stdout dumped.nar
 exec nix nar pack fixture
 cp stdout packed.nar
-bin-cmp dumped.nar packed.nar
+cmp dumped.nar packed.nar
 
 exec nix store ls --store http://127.0.0.1:$PORT -R -l /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
 stdout '18 ./bin/greet'

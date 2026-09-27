@@ -96,7 +96,6 @@ func TestScript(t *testing.T) {
 					return false, fmt.Errorf("unknown condition %q", cond)
 				},
 				Cmds: map[string]func(*testscript.TestScript, bool, []string){
-					"bin-cmp":            cmdBinCmp,
 					"bin-file":           cmdBinFile,
 					"capture-output":     cmdCaptureOutput,
 					"create-pool":        cmdCreatePool,
@@ -341,23 +340,6 @@ func cmdHTTPHold(ts *testscript.TestScript, neg bool, args []string) {
 	defer func() { _ = conn.Close() }()
 	_, _ = fmt.Fprintf(conn, "PUT %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %s\r\n\r\n", u.RequestURI(), u.Host, args[1])
 	_, _ = io.Copy(io.Discard, conn)
-}
-
-func cmdBinCmp(ts *testscript.TestScript, neg bool, args []string) {
-	if neg || len(args) != 2 {
-		ts.Fatalf("usage: bin-cmp file1 file2")
-	}
-	data1, err := os.ReadFile(ts.MkAbs(args[0]))
-	if err != nil {
-		ts.Fatalf("failed to read %s: %v", args[0], err)
-	}
-	data2, err := os.ReadFile(ts.MkAbs(args[1]))
-	if err != nil {
-		ts.Fatalf("failed to read %s: %v", args[1], err)
-	}
-	if !bytes.Equal(data1, data2) {
-		ts.Fatalf("%s and %s differ", args[0], args[1])
-	}
 }
 
 const (
