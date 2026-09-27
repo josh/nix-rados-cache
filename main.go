@@ -372,7 +372,6 @@ func (h *handler) pullNAR(w http.ResponseWriter, r *http.Request, name string, s
 	if resp.ContentLength >= 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 	}
-	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
 		return true
 	}
@@ -460,8 +459,6 @@ func (w *statusWriter) Write(p []byte) (int, error) {
 
 func (h *handler) getCacheInfo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/x-nix-cache-info")
-	w.Header().Set("Content-Length", strconv.Itoa(len(cacheInfo)))
-	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, cacheInfo)
 }
 
@@ -526,7 +523,6 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Vary", "Accept-Encoding")
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
 
@@ -551,7 +547,6 @@ func (h *handler) getNAR(w http.ResponseWriter, r *http.Request, name string) {
 	h.setAccess(head, s)
 	w.Header().Set("Content-Type", "application/x-nix-nar")
 	w.Header().Set("Content-Length", strconv.FormatUint(size, 10))
-	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
 		return
 	}
@@ -613,7 +608,6 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 			name = stripeName(name, 0)
 		}
 		h.setAccess(name, s)
-		w.WriteHeader(http.StatusOK)
 	case err != nil:
 		writeStoreError(w, name, err)
 	default:
