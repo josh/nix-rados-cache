@@ -323,6 +323,7 @@ func cmdHTTPHold(ts *testscript.TestScript, neg bool, args []string) {
 	_, _ = io.Copy(io.Discard, conn)
 }
 
+// Unlike testscript's cmp, this never logs a diff: a failed NAR round trip would dump megabytes of random bytes.
 func cmdBinCmp(ts *testscript.TestScript, neg bool, args []string) {
 	if neg || len(args) != 2 {
 		ts.Fatalf("usage: bin-cmp file1 file2")
