@@ -6,9 +6,6 @@ wait4http http://127.0.0.1:$PORT/nix-cache-info
 
 exec nix key generate-secret --key-name key1
 cp stdout key1.sec
-stdin key1.sec
-exec nix key convert-secret-to-public
-capture-output KEY1_PUB
 exec nix key generate-secret --key-name key2
 cp stdout key2.sec
 stdin key2.sec
