@@ -391,19 +391,14 @@ func startCephCluster(t *testing.T, ctx context.Context, out io.Writer) (string,
 	return confPath, nil
 }
 
-func randomUUID() (string, error) {
+func randomUUID() string {
 	uuid := make([]byte, 16)
-	if _, err := rand.Read(uuid); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%x-%x-%x-%x-%x", uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16]), nil
+	_, _ = rand.Read(uuid)
+	return fmt.Sprintf("%x-%x-%x-%x-%x", uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16])
 }
 
 func setupCephDir(ctx context.Context, tmpDir string, out io.Writer) (string, error) {
-	fsid, err := randomUUID()
-	if err != nil {
-		return "", fmt.Errorf("failed to generate cluster fsid: %w", err)
-	}
+	fsid := randomUUID()
 	monPort, err := getFreePort()
 	if err != nil {
 		return "", fmt.Errorf("failed to allocate monitor port: %w", err)
@@ -505,10 +500,7 @@ func startCephMon(t *testing.T, ctx context.Context, confPath string, out io.Wri
 func startCephOsd(t *testing.T, ctx context.Context, confPath string, out io.Writer) error {
 	for i := 0; i < 3; i++ {
 		osdID := strconv.Itoa(i)
-		osdUUID, err := randomUUID()
-		if err != nil {
-			return fmt.Errorf("failed to generate OSD %d uuid: %w", i, err)
-		}
+		osdUUID := randomUUID()
 		if err := runCeph(ctx, confPath, "osd", "new", osdUUID, osdID); err != nil {
 			return err
 		}
