@@ -21,13 +21,11 @@ import (
 	"time"
 
 	"github.com/ceph/go-ceph/rados"
-	"github.com/klauspost/compress/zstd"
 )
 
 const (
 	cacheInfo        = "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n"
 	maxNarinfoSize   = 16 * 1024 * 1024
-	encodeMinSize    = 1024
 	readPiece        = 1024 * 1024
 	accessCountXattr = "access_count"
 	accessedXattr    = "accessed"
@@ -40,7 +38,6 @@ const (
 var (
 	objectNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	sigLinePattern    = regexp.MustCompile(`^Sig: [^:\s]+:[A-Za-z0-9+/=]+$`)
-	zstdEncoder, _    = zstd.NewWriter(nil)
 )
 
 func main() {
@@ -519,11 +516,6 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(name, "log/"):
 		contentType = "text/plain"
 	}
-	if len(data) >= encodeMinSize && strings.Contains(r.Header.Get("Accept-Encoding"), "zstd") {
-		data = zstdEncoder.EncodeAll(data, nil)
-		w.Header().Set("Content-Encoding", "zstd")
-	}
-	w.Header().Set("Vary", "Accept-Encoding")
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
