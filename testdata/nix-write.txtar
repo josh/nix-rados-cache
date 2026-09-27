@@ -6,12 +6,12 @@ wait4http http://127.0.0.1:$PORT/nix-cache-info
 
 exec nix store add-path --store http://127.0.0.1:$PORT --name hello fixture
 stdout '^/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello$'
-rados-object-count nar/
-stdout '^1$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^nar/'
 exec nix store add-file --store http://127.0.0.1:$PORT --name greeting fixture/hello.txt
 capture-output GREETING
-rados-object-count nar/
-stdout '^2$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=2 '^nar/'
 exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello $GREETING
 cmp fixture/hello.txt $WORK/store2/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello/hello.txt
 cmp fixture/hello.txt $WORK/store2$GREETING
@@ -38,8 +38,8 @@ exec nix store add-path --store $WORK/store1 --name p19 many/19.txt
 exec nix store add-path --store $WORK/store1 --name p20 many/20.txt
 capture-output P20
 exec nix copy --all --from $WORK/store1 --to http://127.0.0.1:$PORT
-rados-object-count nar/
-stdout '^22$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=22 '^nar/'
 exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $P20
 cmp many/20.txt $WORK/store2$P20
 

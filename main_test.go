@@ -96,15 +96,14 @@ func TestScript(t *testing.T) {
 					return false, fmt.Errorf("unknown condition %q", cond)
 				},
 				Cmds: map[string]func(*testscript.TestScript, bool, []string){
-					"bin-cmp":            cmdBinCmp,
-					"bin-file":           cmdBinFile,
-					"capture-output":     cmdCaptureOutput,
-					"create-pool":        cmdCreatePool,
-					"http-hold":          cmdHTTPHold,
-					"rados-object-count": cmdRadosObjectCount,
-					"tail-logs":          cmdTailLogs,
-					"wait4http":          cmdWait4HTTP,
-					"wait4log":           cmdWait4Log,
+					"bin-cmp":        cmdBinCmp,
+					"bin-file":       cmdBinFile,
+					"capture-output": cmdCaptureOutput,
+					"create-pool":    cmdCreatePool,
+					"http-hold":      cmdHTTPHold,
+					"tail-logs":      cmdTailLogs,
+					"wait4http":      cmdWait4HTTP,
+					"wait4log":       cmdWait4Log,
 				},
 				Setup: func(env *testscript.Env) error {
 					env.Setenv("CEPH_CONF", confPath)
@@ -242,29 +241,6 @@ func cmdWait4Log(ts *testscript.TestScript, neg bool, args []string) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	ts.Fatalf("pattern %q did not appear in %s", args[0], args[1])
-}
-
-func cmdRadosObjectCount(ts *testscript.TestScript, neg bool, args []string) {
-	if neg {
-		ts.Fatalf("unsupported: ! rados-object-count")
-	}
-	if len(args) != 1 {
-		ts.Fatalf("usage: rados-object-count <prefix>")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "rados", "--conf", ts.Getenv("CEPH_CONF"), "--pool", ts.Getenv("NIX_RADOS_CACHE_POOL"), "ls")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		ts.Fatalf("failed to list rados objects: %v\noutput: %s", err, output)
-	}
-	count := 0
-	for line := range strings.Lines(string(output)) {
-		if strings.HasPrefix(line, args[0]) {
-			count++
-		}
-	}
-	_, _ = fmt.Fprintf(ts.Stdout(), "%d\n", count)
 }
 
 func cmdBinFile(ts *testscript.TestScript, neg bool, args []string) {

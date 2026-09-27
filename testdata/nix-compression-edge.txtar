@@ -26,11 +26,11 @@ wait4log 'msg="read stripe" object=nar/[^ ]+ offset=100' server.log
 exec nix store add-path --store $WORK/store1 --name codec codec
 capture-output CODEC
 exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=xz $CODEC
-rados-object-count nar/
-stdout '^2$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=2 '^nar/'
 exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=zstd $CODEC
-rados-object-count nar/
-stdout '^2$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=2 '^nar/'
 exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $CODEC
 stdout '"compression":"xz"'
 stdout '"url":"nar/[0-9a-z]+\.nar\.xz"'

@@ -28,8 +28,8 @@ wait4log 'msg=request method=GET path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo 
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo accessed
 stdout '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$'
 
-rados-object-count g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
-stdout '^1$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2\.narinfo'
 
 exec curl --silent --write-out '%{http_code}' --upload-file other.narinfo http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
 stdout '^200$'
@@ -41,8 +41,8 @@ wait4log 'msg=request method=GET path=/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo 
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo access_count
 stdout '^5$'
 
-rados-object-count g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
-stdout '^1$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2\.narinfo'
 
 -- other.narinfo --
 StorePath: /nix/store/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2-other

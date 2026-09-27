@@ -18,8 +18,8 @@ exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $B
 cmp bigfixture/blob $WORK/store2$BIG/blob
 wait4log 'level=WARN msg=upstream url=http://127.0.0.1:1 .*connection refused' server.log
 wait4log 'msg=pulled object=nar/[^ ]+ upstream=http://127.0.0.1:[0-9]+' server.log
-rados-object-count nar/
-stdout '^2$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=2 '^nar/'
 
 kill -INT server
 wait server
@@ -35,5 +35,5 @@ exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT2?compression=none 
 exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store3 $HUGE
 cmp hugefixture/blob $WORK/store3$HUGE/blob
 wait4log 'msg="store pulled object" object=nar/[^ ]+' server.log
-rados-object-count nar/
-stdout '^0$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+! stdout '^nar/'

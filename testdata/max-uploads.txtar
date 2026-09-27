@@ -14,8 +14,8 @@ wait a
 stdout '^201$'
 wait b
 stdout '^201$'
-rados-object-count nar/queued
-stdout '^0$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+! stdout '^nar/queued'
 
 exec curl --silent --fail --output a-downloaded.nar.xz http://127.0.0.1:$PORT/nar/a.nar.xz
 bin-cmp a.nar.xz a-downloaded.nar.xz

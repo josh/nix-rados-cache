@@ -16,5 +16,5 @@ bin-cmp big.nar.xz downloaded.nar.xz
 http-hold http://127.0.0.1:$PORT/nar/stalled.nar.xz 1000
 wait4log 'msg=request method=PUT path=/nar/stalled.nar.xz status=500' server.log
 wait4log 'object=nar/stalled.nar.xz error=".*i/o timeout' server.log
-rados-object-count nar/stalled
-stdout '^0$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+! stdout '^nar/stalled'

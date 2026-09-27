@@ -20,15 +20,15 @@ stdout '^404$'
 exec curl --silent --write-out '%{http_code}' --output /dev/null http://127.0.0.1:$PORT/
 stdout '^404$'
 
-rados-object-count ''
-stdout '^0$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+! stdout '^.'
 
 exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file body http://127.0.0.1:$PORT/log/abc123-hello.drv
 stdout '^201$'
 exec curl --silent --fail --output log.out http://127.0.0.1:$PORT/log/abc123-hello.drv
 cmp body log.out
-rados-object-count log/
-stdout '^1$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^log/'
 
 bin-file big.log 4096
 exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file big.log http://127.0.0.1:$PORT/log/big.drv
@@ -64,8 +64,8 @@ exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file b
 stdout '^404$'
 exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file body http://127.0.0.1:$PORT/build-trace-v2/a%20b.drv/out.doi
 stdout '^404$'
-rados-object-count build-trace-v2/
-stdout '^1$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^build-trace-v2/'
 
 exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file body http://127.0.0.1:$PORT/abc123.ls
 stdout '^201$'

@@ -14,13 +14,13 @@ stdout '"deriver":"[0-9a-z]+-nix-rados-cache-log\.drv"'
 stderr 'is not available'
 
 exec nix store copy-log --to http://127.0.0.1:$PORT $OUT
-rados-object-count log/
-stdout '^1$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^log/'
 wait4log 'msg=request method=PUT path=/log/[0-9a-z]+-nix-rados-cache-log.drv status=201' server.log
 
 exec nix log --store http://127.0.0.1:$PORT --substituters '' $OUT
 stdout '^hello-from-builder$'
 
 exec nix store copy-log --to http://127.0.0.1:$PORT $OUT
-rados-object-count log/
-stdout '^1$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^log/'

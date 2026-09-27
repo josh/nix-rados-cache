@@ -18,8 +18,8 @@ capture-output NAR "url":"(nar/[^"]+)"
 
 ! exec curl --silent --max-time 1 --limit-rate 1M --output /dev/null http://127.0.0.1:$PORT/$NAR
 wait4log 'msg=pulled object=nar/[^ ]+ upstream=http://127.0.0.1:[0-9]+' server.log
-rados-object-count nar/
-stdout '^2$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=2 '^nar/'
 
 exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $BIG
 cmp bigfixture/blob $WORK/store2$BIG/blob
