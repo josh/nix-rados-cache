@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
@@ -31,6 +32,7 @@ const (
 	accessCountXattr = "access_count"
 	accessedXattr    = "accessed"
 	createdXattr     = "created"
+	upstreamXattr    = "upstream"
 	sizeXattr        = "striper.size"
 	stripeSizeXattr  = "striper.layout.object_size"
 )
@@ -50,6 +52,14 @@ func main() {
 	shutdownTimeout := flag.Duration("shutdown-timeout", 30*time.Second, "how long in-flight requests may finish after a shutdown signal")
 	ioTimeout := flag.Duration("io-timeout", 30*time.Second, "longest pause allowed while reading a request body or writing a response")
 	maxUploads := flag.Int("max-uploads", 8, "uploads handled at once; the rest wait")
+	var upstreams []string
+	flag.Func("upstream", "cache to pull misses from; repeatable, tried in order", func(s string) error {
+		if u, err := url.Parse(s); err != nil || u.Host == "" {
+			return fmt.Errorf("invalid upstream %q", s)
+		}
+		upstreams = append(upstreams, strings.TrimSuffix(s, "/"))
+		return nil
+	})
 	flag.Parse()
 
 	var logOut io.Writer = os.Stderr
@@ -87,7 +97,7 @@ func main() {
 		slog.Error("listen", "error", err)
 		os.Exit(1)
 	}
-	srv := &http.Server{Handler: newHandler(ioctx, *stripeSize, *caDerivations, *maxUploads)}
+	srv := &http.Server{Handler: newHandler(ioctx, *stripeSize, *caDerivations, *maxUploads, upstreams, *ioTimeout)}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -102,7 +112,7 @@ func main() {
 		}
 	}()
 
-	slog.Info("listening", "address", *listen, "pool", *pool, "stripe_size", *stripeSize, "ca_derivations", *caDerivations)
+	slog.Info("listening", "address", *listen, "pool", *pool, "stripe_size", *stripeSize, "ca_derivations", *caDerivations, "upstreams", upstreams)
 	if err := srv.Serve(idleListener{ln, *ioTimeout}); !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
@@ -150,12 +160,15 @@ func now() []byte {
 	return []byte(time.Now().UTC().Format(time.RFC3339))
 }
 
-func putObject(ioctx *rados.IOContext, name string, data []byte, calls *int) error {
+func putObject(ioctx *rados.IOContext, name string, data []byte, upstream string, calls *int) error {
 	op := rados.CreateWriteOp()
 	defer op.Release()
 	op.Create(rados.CreateExclusive)
 	op.SetXattr(createdXattr, now())
 	stampAccess(op, 1)
+	if upstream != "" {
+		op.SetXattr(upstreamXattr, []byte(upstream))
+	}
 	op.WriteFull(data)
 	*calls++
 	return op.Operate(ioctx, name, rados.OperationNoFlag)
@@ -287,10 +300,71 @@ type handler struct {
 	ioctx      *rados.IOContext
 	stripeSize int
 	uploads    chan struct{}
+	upstreams  []string
+	client     *http.Client
+	ioTimeout  time.Duration
 }
 
-func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool, maxUploads int) http.Handler {
-	h := &handler{ioctx: ioctx, stripeSize: stripeSize, uploads: make(chan struct{}, maxUploads)}
+type stallGuard struct {
+	io.ReadCloser
+	timer   *time.Timer
+	timeout time.Duration
+	cancel  context.CancelFunc
+}
+
+func (g stallGuard) Read(p []byte) (int, error) {
+	g.timer.Reset(g.timeout)
+	defer g.timer.Stop()
+	return g.ReadCloser.Read(p)
+}
+
+func (g stallGuard) Close() error {
+	g.timer.Stop()
+	g.cancel()
+	return g.ReadCloser.Close()
+}
+
+func (h *handler) fetch(path string) (*http.Response, string) {
+	for _, u := range h.upstreams {
+		ctx, cancel := context.WithCancel(context.Background())
+		timer := time.AfterFunc(h.ioTimeout, cancel)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u+"/"+path, nil)
+		resp, err := h.client.Do(req)
+		if err != nil {
+			slog.Warn("upstream", "url", u, "path", path, "error", err)
+		} else if resp.StatusCode == http.StatusOK {
+			resp.Body = stallGuard{resp.Body, timer, h.ioTimeout, cancel}
+			return resp, u
+		} else {
+			_ = resp.Body.Close()
+		}
+		timer.Stop()
+		cancel()
+	}
+	return nil, ""
+}
+
+func (h *handler) pullPlain(name string, s *reqStats) error {
+	resp, u := h.fetch(name)
+	if resp == nil {
+		return rados.ErrNotFound
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxNarinfoSize))
+	if err == nil {
+		err = putObject(h.ioctx, name, body, u, &s.radosCalls)
+	}
+	if err != nil && !errors.Is(err, rados.ErrObjectExists) {
+		return err
+	}
+	s.upstream = u
+	return nil
+}
+
+func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool, maxUploads int, upstreams []string, ioTimeout time.Duration) http.Handler {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 10 * time.Second
+	h := &handler{ioctx: ioctx, stripeSize: stripeSize, uploads: make(chan struct{}, maxUploads), upstreams: upstreams, client: &http.Client{Transport: transport}, ioTimeout: ioTimeout}
 	mux := http.NewServeMux()
 	if caDerivations {
 		mux.HandleFunc("GET /build-trace-v2/{drv}/{output}", h.getObject)
@@ -309,13 +383,14 @@ func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool, maxU
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		mux.ServeHTTP(sw, r)
 		slog.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start),
-			"req_bytes", r.ContentLength, "resp_bytes", sw.bytes, "rados_calls", sw.stats.radosCalls, "access_count", sw.stats.accessCount)
+			"req_bytes", r.ContentLength, "resp_bytes", sw.bytes, "rados_calls", sw.stats.radosCalls, "access_count", sw.stats.accessCount, "upstream", sw.stats.upstream)
 	})
 }
 
 type reqStats struct {
 	radosCalls  int
 	accessCount uint64
+	upstream    string
 }
 
 func stats(w http.ResponseWriter) *reqStats {
@@ -382,12 +457,18 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 		h.getNAR(w, r, name)
 		return
 	}
-	data, err := getObject(h.ioctx, name, &stats(w).radosCalls)
+	s := stats(w)
+	data, err := getObject(h.ioctx, name, &s.radosCalls)
+	if errors.Is(err, rados.ErrNotFound) && strings.HasSuffix(name, ".narinfo") {
+		if err = h.pullPlain(name, s); err == nil {
+			data, err = getObject(h.ioctx, name, &s.radosCalls)
+		}
+	}
 	if err != nil {
 		writeStoreError(w, name, err)
 		return
 	}
-	h.setAccess(name, stats(w))
+	h.setAccess(name, s)
 	contentType := "text/x-nix-narinfo"
 	switch {
 	case strings.HasSuffix(name, ".ls") || strings.HasPrefix(name, "build-trace-v2/"):
@@ -475,7 +556,7 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "malformed Sig line", http.StatusBadRequest)
 			return
 		}
-		err = putObject(h.ioctx, name, data, &s.radosCalls)
+		err = putObject(h.ioctx, name, data, "", &s.radosCalls)
 		if errors.Is(err, rados.ErrObjectExists) && len(sigs) > 0 {
 			err = cmp.Or(appendSigs(h.ioctx, name, sigs, &s.radosCalls), err)
 		}

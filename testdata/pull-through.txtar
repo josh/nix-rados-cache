@@ -1,0 +1,26 @@
+[!net] skip 'no network'
+
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --upstream https://cache.nixos.org --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 /nix/store/yh6x9ia5kxxw3w90vkb09vqgfvhb416k-hello-2.12.1
+stdout '"narSize":226560'
+wait4log 'msg=request method=GET path=/yh6x9ia5kxxw3w90vkb09vqgfvhb416k.narinfo status=200 .* upstream=https://cache.nixos.org' server.log
+rados-object-count yh6x9ia5kxxw3w90vkb09vqgfvhb416k.narinfo
+stdout '^1$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr yh6x9ia5kxxw3w90vkb09vqgfvhb416k.narinfo upstream
+stdout '^https://cache.nixos.org$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL get yh6x9ia5kxxw3w90vkb09vqgfvhb416k.narinfo -
+stdout '^Sig: cache.nixos.org-1:'
+
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 /nix/store/yh6x9ia5kxxw3w90vkb09vqgfvhb416k-hello-2.12.1
+stdout '"narSize":226560'
+wait4log 'msg=request method=GET path=/yh6x9ia5kxxw3w90vkb09vqgfvhb416k.narinfo status=200 .* upstream=""' server.log
+
+! exec nix path-info --store http://127.0.0.1:$PORT /nix/store/00000000000000000000000000000000-nothing
+wait4log 'msg=request method=GET path=/00000000000000000000000000000000.narinfo status=404' server.log
+rados-object-count ''
+stdout '^1$'

@@ -10,6 +10,9 @@ stderr 'stripe-size'
 ! exec nix-rados-cache --pool no-such-pool --max-uploads 0
 stderr 'max-uploads'
 
+! exec nix-rados-cache --pool no-such-pool --upstream cache.nixos.org
+stderr 'invalid upstream'
+
 ! exec nix-rados-cache --pool no-such-pool --log-file $WORK/nonexistent/server.log
 stderr 'open log file'
 
