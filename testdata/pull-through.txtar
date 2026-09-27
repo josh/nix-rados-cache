@@ -24,3 +24,26 @@ wait4log 'msg=request method=GET path=/yh6x9ia5kxxw3w90vkb09vqgfvhb416k.narinfo 
 wait4log 'msg=request method=GET path=/00000000000000000000000000000000.narinfo status=404' server.log
 rados-object-count ''
 stdout '^1$'
+
+exec curl --silent --head http://127.0.0.1:$PORT/nar/1qh6kihqm794qwapdv3zpr523qcxin6l4j0yqfyg5hfxzqy6l2na.nar.xz
+stdout 'HTTP/1.1 200'
+stdout 'Content-Length: 50204'
+rados-object-count nar/
+stdout '^0$'
+
+exec nix copy --from http://127.0.0.1:$PORT --to $WORK/store2 --trusted-public-keys cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= /nix/store/yh6x9ia5kxxw3w90vkb09vqgfvhb416k-hello-2.12.1
+exists $WORK/store2/nix/store/yh6x9ia5kxxw3w90vkb09vqgfvhb416k-hello-2.12.1/bin/hello
+wait4log 'msg=request method=GET path=/nar/1qh6kihqm794qwapdv3zpr523qcxin6l4j0yqfyg5hfxzqy6l2na.nar.xz status=200 .* upstream=https://cache.nixos.org' server.log
+wait4log 'msg=pulled object=nar/1qh6kihqm794qwapdv3zpr523qcxin6l4j0yqfyg5hfxzqy6l2na.nar.xz upstream=https://cache.nixos.org' server.log
+rados-object-count nar/1qh6kihqm794qwapdv3zpr523qcxin6l4j0yqfyg5hfxzqy6l2na.nar.xz
+stdout '^1$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/1qh6kihqm794qwapdv3zpr523qcxin6l4j0yqfyg5hfxzqy6l2na.nar.xz.0000000000000000 upstream
+stdout '^https://cache.nixos.org$'
+rados-object-count ''
+capture-output TOTAL
+
+exec nix copy --from http://127.0.0.1:$PORT --to $WORK/store3 --trusted-public-keys cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= /nix/store/yh6x9ia5kxxw3w90vkb09vqgfvhb416k-hello-2.12.1
+exists $WORK/store3/nix/store/yh6x9ia5kxxw3w90vkb09vqgfvhb416k-hello-2.12.1/bin/hello
+wait4log 'msg=request method=GET path=/nar/1qh6kihqm794qwapdv3zpr523qcxin6l4j0yqfyg5hfxzqy6l2na.nar.xz status=200 .* upstream=""' server.log
+rados-object-count ''
+stdout ^$TOTAL$

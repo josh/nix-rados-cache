@@ -120,11 +120,13 @@ func TestScript(t *testing.T) {
 					env.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
 					env.Setenv("NIX_CONFIG", "experimental-features = nix-command\nnarinfo-cache-negative-ttl = 0\nnarinfo-cache-positive-ttl = 0\n")
 
-					port, err := getFreePort()
-					if err != nil {
-						return fmt.Errorf("failed to allocate PORT: %w", err)
+					for _, name := range []string{"PORT", "PORT2"} {
+						port, err := getFreePort()
+						if err != nil {
+							return fmt.Errorf("failed to allocate %s: %w", name, err)
+						}
+						env.Setenv(name, strconv.Itoa(port))
 					}
-					env.Setenv("PORT", strconv.Itoa(port))
 					return nil
 				},
 			})
