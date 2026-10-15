@@ -252,7 +252,7 @@ func cmdBackdate(ts *testscript.TestScript, neg bool, args []string) {
 	t, err := time.Parse(time.RFC3339, args[1])
 	ts.Check(err)
 	ts.Check(os.Setenv("CEPH_CONF", ts.Getenv("CEPH_CONF")))
-	ioctx, err := openPool(ts.Getenv("NIX_RADOS_CACHE_POOL"))
+	_, ioctx, err := openPool(ts.Getenv("NIX_RADOS_CACHE_POOL"))
 	ts.Check(err)
 	op := rados.CreateWriteOp()
 	defer op.Release()

@@ -63,7 +63,7 @@ The object's own RADOS mtime is updated by these xattr writes, so it records whe
 
 ## Garbage collection
 
-A collector is a separate process on the pool that runs with or without servers and takes no locks. It deletes nothing whose mtime is within its age limit, which keeps uploads and re-uploads in flight safe. Beyond that limit a plain object is deleted on age alone; a NAR is deleted when no remaining narinfo's `URL:` names it, stripe 0 first; a stripe whose stripe 0 is gone is deleted on its own. Every delete is conditional on the object version the collector observed, so an object a request touches during the run survives it. Foreign names are never deleted.
+A collector is a separate process on the pool that runs with or without servers and takes no locks. It deletes nothing whose mtime is within its age limit, which keeps uploads and re-uploads in flight safe. Beyond that limit a plain object is deleted on age alone; a NAR is deleted when no remaining narinfo's `URL:` names it, stripe 0 first; a stripe whose stripe 0 is gone is deleted on its own. A collector may also evict store paths to meet a free-space target, oldest or largest first: eviction deletes the narinfo and the NAR follows by the rule above. Every delete is conditional on the object version the collector observed, so an object a request touches during the run survives it. Foreign names are never deleted.
 
 ## Integrity
 

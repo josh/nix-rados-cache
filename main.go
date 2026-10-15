@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -92,7 +93,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	ioctx, err := openPool(*pool)
+	_, ioctx, err := openPool(*pool)
 	if err != nil {
 		slog.Error("failed to open pool", "error", err)
 		os.Exit(1)
@@ -129,26 +130,30 @@ func main() {
 func gc(args []string) {
 	fs := flag.NewFlagSet("gc", flag.ExitOnError)
 	pool := fs.String("pool", "", "RADOS pool name")
-	maxAge := fs.Duration("max-age", 30*24*time.Hour, "delete objects untouched for this long")
+	minAge := fs.Duration("min-age", time.Hour, "never delete objects touched within this long")
+	maxAge := fs.Duration("max-age", 0, "delete objects untouched for this long; 0 disables")
+	var minFree, maxFree int64
+	fs.Func("min-free", "evict store paths while the pool's free space is below this; K, M, G and T suffixes", func(s string) (err error) { minFree, err = parseSize(s); return })
+	fs.Func("max-free", "stop evicting once free space reaches this; defaults to --min-free", func(s string) (err error) { maxFree, err = parseSize(s); return })
+	priority := fs.String("priority", "oldest", "evict oldest or largest store paths first")
 	dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
 	_ = fs.Parse(args)
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-	if *pool == "" {
-		fmt.Fprintln(os.Stderr, "--pool is required")
+	if *pool == "" || (*priority != "oldest" && *priority != "largest") {
+		fmt.Fprintln(os.Stderr, "--pool is required; --priority must be oldest or largest")
 		os.Exit(1)
 	}
-	ioctx, err := openPool(*pool)
+	conn, ioctx, err := openPool(*pool)
 	if err != nil {
 		slog.Error("failed to open pool", "error", err)
 		os.Exit(1)
 	}
-	cutoff := time.Now().Add(-*maxAge)
-	live := map[string]bool{}
-	deleted := 0
+	grace, expiry := time.Now().Add(-*minAge), time.Now().Add(-*maxAge)
+	deleted, stored, freed := 0, int64(0), int64(0)
 
 	remove := func(name string) bool {
 		stat, err := ioctx.Stat(name)
-		if err != nil || !stat.ModTime.Before(cutoff) {
+		if err != nil || !stat.ModTime.Before(grace) {
 			return false
 		}
 		version, _ := ioctx.GetLastVersion()
@@ -175,21 +180,76 @@ func gc(args []string) {
 		}
 	}
 
+	type path struct {
+		name, url string
+		size      int64
+		mtime     time.Time
+	}
+	var paths []path
 	walk(func(name string) {
-		if !plainPattern.MatchString(name) || remove(name) || !strings.HasSuffix(name, ".narinfo") {
+		if !plainPattern.MatchString(name) {
+			return
+		}
+		stat, err := ioctx.Stat(name)
+		if err != nil || (*maxAge > 0 && stat.ModTime.Before(expiry) && remove(name)) {
+			return
+		}
+		stored += int64(stat.Size)
+		if !strings.HasSuffix(name, ".narinfo") {
 			return
 		}
 		data, _ := getObject(ioctx, name, new(int))
+		p := path{name: name, mtime: stat.ModTime}
 		for line := range strings.Lines(string(data)) {
-			if url, ok := strings.CutPrefix(line, "URL: "); ok {
-				live[strings.TrimSpace(url)] = true
+			if v, ok := strings.CutPrefix(line, "URL: "); ok {
+				p.url = strings.TrimSpace(v)
+			}
+			if v, ok := strings.CutPrefix(line, "FileSize: "); ok {
+				p.size, _ = strconv.ParseInt(strings.TrimSpace(v), 10, 64)
 			}
 		}
+		stored += p.size
+		paths = append(paths, p)
 	})
+	if minFree > 0 {
+		quota, err := poolQuota(conn, *pool)
+		if err != nil {
+			slog.Error("pool quota", "error", err)
+			os.Exit(1)
+		}
+		free := quota - stored
+		slog.Info("gc", "pool", *pool, "quota", quota, "stored", stored, "free", free)
+		if free < minFree {
+			slices.SortFunc(paths, func(a, b path) int {
+				if *priority == "largest" {
+					return cmp.Compare(b.size, a.size)
+				}
+				return a.mtime.Compare(b.mtime)
+			})
+			for i, p := range paths {
+				if free+freed >= max(maxFree, minFree) {
+					break
+				}
+				if remove(p.name) {
+					freed += p.size
+					paths[i].url = ""
+				}
+			}
+		}
+	}
+	live := map[string]bool{}
+	for _, p := range paths {
+		live[p.url] = true
+	}
 	head := stripeName("", 0)
 	walk(func(name string) {
-		if stripePattern.MatchString(name) && strings.HasSuffix(name, head) && !live[strings.TrimSuffix(name, head)] {
+		switch {
+		case stripePattern.MatchString(name) && strings.HasSuffix(name, head) && !live[strings.TrimSuffix(name, head)]:
 			remove(name)
+		case plainPattern.MatchString(name) && strings.HasSuffix(name, ".ls"):
+			if _, err := ioctx.Stat(strings.TrimSuffix(name, ".ls") + ".narinfo"); errors.Is(err, rados.ErrNotFound) {
+				remove(name)
+			}
 		}
 	})
 	walk(func(name string) {
@@ -200,28 +260,60 @@ func gc(args []string) {
 			remove(name)
 		}
 	})
-	slog.Info("gc", "deleted", deleted)
+	slog.Info("gc", "deleted", deleted, "freed", freed)
 }
 
-func openPool(pool string) (*rados.IOContext, error) {
+func parseSize(s string) (int64, error) {
+	units := map[string]int64{"": 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30, "T": 1 << 40}
+	suffix := strings.TrimLeft(s, "0123456789")
+	n, err := strconv.ParseInt(strings.TrimSuffix(s, suffix), 10, 64)
+	if err != nil || units[suffix] == 0 {
+		return 0, fmt.Errorf("invalid size %q", s)
+	}
+	return n * units[suffix], nil
+}
+
+func poolQuota(conn *rados.Conn, pool string) (int64, error) {
+	var dump struct {
+		Pools []struct {
+			Name     string `json:"pool_name"`
+			MaxBytes int64  `json:"quota_max_bytes"`
+		}
+	}
+	out, _, err := conn.MonCommand([]byte(`{"prefix":"osd dump","format":"json"}`))
+	if err == nil {
+		err = json.Unmarshal(out, &dump)
+	}
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range dump.Pools {
+		if p.Name == pool && p.MaxBytes > 0 {
+			return p.MaxBytes, nil
+		}
+	}
+	return 0, fmt.Errorf("pool %q has no byte quota", pool)
+}
+
+func openPool(pool string) (*rados.Conn, *rados.IOContext, error) {
 	conn, err := rados.NewConn()
 	if err != nil {
-		return nil, fmt.Errorf("create connection: %w", err)
+		return nil, nil, fmt.Errorf("create connection: %w", err)
 	}
 	if err := conn.ReadDefaultConfigFile(); err != nil {
-		return nil, fmt.Errorf("read ceph config: %w", err)
+		return nil, nil, fmt.Errorf("read ceph config: %w", err)
 	}
 	if err := conn.ParseDefaultConfigEnv(); err != nil {
-		return nil, fmt.Errorf("parse CEPH_ARGS: %w", err)
+		return nil, nil, fmt.Errorf("parse CEPH_ARGS: %w", err)
 	}
 	if err := conn.Connect(); err != nil {
-		return nil, fmt.Errorf("connect to ceph: %w", err)
+		return nil, nil, fmt.Errorf("connect to ceph: %w", err)
 	}
 	ioctx, err := conn.OpenIOContext(pool)
 	if err != nil {
-		return nil, fmt.Errorf("open pool %q: %w", pool, err)
+		return nil, nil, fmt.Errorf("open pool %q: %w", pool, err)
 	}
-	return ioctx, nil
+	return conn, ioctx, nil
 }
 
 func getObject(ioctx *rados.IOContext, name string, calls *int) ([]byte, error) {

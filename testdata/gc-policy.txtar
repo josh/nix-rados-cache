@@ -1,0 +1,71 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix store add-path --store $WORK/store1 --name hello fixture
+capture-output HELLO_HASH '^/nix/store/([a-z0-9]{32})-hello$'
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/$HELLO_HASH-hello
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL get $HELLO_HASH.narinfo -
+capture-output HELLO_NAR 'URL: (nar/\S+)'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put $HELLO_HASH.ls fixture/hello.txt
+
+mkdir bigfixture
+bin-file bigfixture/blob 17000000
+exec nix store add-path --store $WORK/store1 --name big bigfixture
+capture-output BIG_HASH '^/nix/store/([a-z0-9]{32})-big$'
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/$BIG_HASH-big
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL get $BIG_HASH.narinfo -
+capture-output BIG_NAR 'URL: (nar/\S+)'
+capture-output BIG_SIZE 'FileSize: ([0-9]+)'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put foreign/object fixture/hello.txt
+
+backdate $HELLO_HASH.narinfo 2000-01-01T00:00:00Z
+backdate $HELLO_HASH.ls 2000-01-01T00:00:00Z
+backdate $HELLO_NAR.0000000000000000 2000-01-01T00:00:00Z
+backdate $BIG_HASH.narinfo 2000-01-01T00:00:00Z
+backdate $BIG_NAR.0000000000000000 2000-01-01T00:00:00Z
+backdate $BIG_NAR.0000000000000001 2000-01-01T00:00:00Z
+
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL
+stderr 'msg=gc deleted=0 freed=0'
+! exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --min-free 1K
+stderr 'has no byte quota'
+
+exec ceph --conf $CEPH_CONF osd pool set-quota $NIX_RADOS_CACHE_POOL max_bytes 20000000
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --min-free 1M
+stderr 'msg=gc pool=test-[0-9a-f]+ quota=20000000 stored=170[0-9]{5} free=29[0-9]{5}$'
+stderr 'msg=gc deleted=0 freed=0'
+
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --min-free 4M --max-free 4M --priority largest
+stderr 'msg=deleted object='$BIG_HASH'\.narinfo'
+stderr 'msg=gc deleted=3 freed='$BIG_SIZE'$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=4 '^.'
+! stdout '^'$BIG_HASH
+! stdout '^'$BIG_NAR
+
+exec nix store add-path --store $WORK/store1 --name other otherfixture
+capture-output OTHER_HASH '^/nix/store/([a-z0-9]{32})-other$'
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/$OTHER_HASH-other
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL get $OTHER_HASH.narinfo -
+capture-output OTHER_NAR 'URL: (nar/\S+)'
+backdate $OTHER_HASH.narinfo 2001-01-01T00:00:00Z
+backdate $OTHER_NAR.0000000000000000 2001-01-01T00:00:00Z
+
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --min-free 1T --dry-run
+stderr 'msg=gc deleted=4 freed=[1-9][0-9]*$'
+
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --min-free 1T
+stderr '(?s)msg=deleted object='$HELLO_HASH'\.narinfo.*msg=deleted object='$OTHER_HASH'\.narinfo'
+stderr 'msg=deleted object='$HELLO_HASH'\.ls'
+stderr 'msg=gc deleted=5 freed=[1-9][0-9]*$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^.'
+stdout '^foreign/object$'
+
+-- fixture/hello.txt --
+hello from nix-rados-cache
+-- otherfixture/other.txt --
+another path
