@@ -1,0 +1,67 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix store add-path --store $WORK/store1 --name hello fixture
+capture-output HELLO_HASH '^/nix/store/([a-z0-9]{32})-hello$'
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/$HELLO_HASH-hello
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL get $HELLO_HASH.narinfo -
+capture-output HELLO_NAR 'URL: (nar/\S+)'
+
+mkdir bigfixture
+bin-file bigfixture/blob 17000000
+exec nix store add-path --store $WORK/store1 --name big bigfixture
+capture-output BIG_HASH '^/nix/store/([a-z0-9]{32})-big$'
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT /nix/store/$BIG_HASH-big
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL get $BIG_HASH.narinfo -
+capture-output BIG_NAR 'URL: (nar/\S+)'
+
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put nar/stray.nar.xz.0000000000000001 fixture/hello.txt
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put foreign/object fixture/hello.txt
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=7 '^.'
+
+backdate $HELLO_HASH.narinfo 2000-01-01T00:00:00Z
+backdate $HELLO_NAR.0000000000000000 2000-01-01T00:00:00Z
+backdate $BIG_NAR.0000000000000000 2000-01-01T00:00:00Z
+backdate nar/stray.nar.xz.0000000000000001 2000-01-01T00:00:00Z
+backdate foreign/object 2000-01-01T00:00:00Z
+
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --max-age 1h --dry-run
+stderr 'msg="would delete" object='$HELLO_HASH'.narinfo'
+stderr 'msg="would delete" object='$HELLO_NAR'.0000000000000000'
+stderr 'msg="would delete" object=nar/stray.nar.xz.0000000000000001'
+stderr 'msg=gc deleted=3'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=7 '^.'
+
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --max-age 1h
+stderr 'msg=deleted object='$HELLO_HASH'.narinfo'
+stderr 'msg=deleted object='$HELLO_NAR'.0000000000000000'
+stderr 'msg=deleted object=nar/stray.nar.xz.0000000000000001'
+stderr 'msg=gc deleted=3'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=4 '^.'
+stdout -count=1 '^'$BIG_HASH'\.narinfo$'
+stdout -count=2 '^'$BIG_NAR'\.'
+stdout -count=1 '^foreign/object$'
+
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 /nix/store/$BIG_HASH-big
+bin-cmp bigfixture/blob $WORK/store2/nix/store/$BIG_HASH-big/blob
+
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --max-age 1h
+stderr 'msg=gc deleted=0'
+
+backdate $BIG_HASH.narinfo 2000-01-01T00:00:00Z
+backdate $BIG_NAR.0000000000000000 2000-01-01T00:00:00Z
+backdate $BIG_NAR.0000000000000001 2000-01-01T00:00:00Z
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --max-age 1h
+stderr 'msg=gc deleted=3'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^.'
+stdout '^foreign/object$'
+
+-- fixture/hello.txt --
+hello from nix-rados-cache

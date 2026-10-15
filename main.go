@@ -40,10 +40,16 @@ const (
 var (
 	objectNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	sigLinePattern    = regexp.MustCompile(`^Sig: [^:\s]+:[A-Za-z0-9+/=]+$`)
+	plainPattern      = regexp.MustCompile(`^(log/|build-trace-v2/[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$`)
+	stripePattern     = regexp.MustCompile(`^nar/[A-Za-z0-9._-]+\.[0-9a-f]{16}$`)
 	zstdEncoder, _    = zstd.NewWriter(nil)
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "gc" {
+		gc(os.Args[2:])
+		return
+	}
 	listen := flag.String("listen", "127.0.0.1:8080", "TCP address to listen on")
 	pool := flag.String("pool", "", "RADOS pool name")
 	stripeSize := flag.Int("stripe-size", 16*1024*1024, "bytes per RADOS object for NARs")
@@ -118,6 +124,83 @@ func main() {
 		os.Exit(1)
 	}
 	<-done
+}
+
+func gc(args []string) {
+	fs := flag.NewFlagSet("gc", flag.ExitOnError)
+	pool := fs.String("pool", "", "RADOS pool name")
+	maxAge := fs.Duration("max-age", 30*24*time.Hour, "delete objects untouched for this long")
+	dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
+	_ = fs.Parse(args)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	if *pool == "" {
+		fmt.Fprintln(os.Stderr, "--pool is required")
+		os.Exit(1)
+	}
+	ioctx, err := openPool(*pool)
+	if err != nil {
+		slog.Error("failed to open pool", "error", err)
+		os.Exit(1)
+	}
+	cutoff := time.Now().Add(-*maxAge)
+	live := map[string]bool{}
+	deleted := 0
+
+	remove := func(name string) bool {
+		stat, err := ioctx.Stat(name)
+		if err != nil || !stat.ModTime.Before(cutoff) {
+			return false
+		}
+		version, _ := ioctx.GetLastVersion()
+		if *dryRun {
+			slog.Info("would delete", "object", name)
+		} else {
+			op := rados.CreateWriteOp()
+			defer op.Release()
+			op.AssertVersion(version)
+			op.Remove()
+			if err := op.Operate(ioctx, name, rados.OperationNoFlag); err != nil {
+				slog.Warn("skipped", "object", name, "error", err)
+				return false
+			}
+			slog.Info("deleted", "object", name)
+		}
+		deleted++
+		return true
+	}
+	walk := func(visit func(name string)) {
+		if err := ioctx.ListObjects(visit); err != nil {
+			slog.Error("list pool", "error", err)
+			os.Exit(1)
+		}
+	}
+
+	walk(func(name string) {
+		if !plainPattern.MatchString(name) || remove(name) || !strings.HasSuffix(name, ".narinfo") {
+			return
+		}
+		data, _ := getObject(ioctx, name, new(int))
+		for line := range strings.Lines(string(data)) {
+			if url, ok := strings.CutPrefix(line, "URL: "); ok {
+				live[strings.TrimSpace(url)] = true
+			}
+		}
+	})
+	head := stripeName("", 0)
+	walk(func(name string) {
+		if stripePattern.MatchString(name) && strings.HasSuffix(name, head) && !live[strings.TrimSuffix(name, head)] {
+			remove(name)
+		}
+	})
+	walk(func(name string) {
+		if !stripePattern.MatchString(name) || strings.HasSuffix(name, head) {
+			return
+		}
+		if _, err := ioctx.Stat(stripeName(name[:len(name)-len(head)], 0)); errors.Is(err, rados.ErrNotFound) {
+			remove(name)
+		}
+	})
+	slog.Info("gc", "deleted", deleted)
 }
 
 func openPool(pool string) (*rados.IOContext, error) {

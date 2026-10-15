@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ceph/go-ceph/rados"
 	"github.com/rogpeppe/go-internal/testscript"
 )
 
@@ -96,6 +97,7 @@ func TestScript(t *testing.T) {
 					return false, fmt.Errorf("unknown condition %q", cond)
 				},
 				Cmds: map[string]func(*testscript.TestScript, bool, []string){
+					"backdate":       cmdBackdate,
 					"bin-cmp":        cmdBinCmp,
 					"bin-file":       cmdBinFile,
 					"capture-output": cmdCaptureOutput,
@@ -241,6 +243,21 @@ func cmdWait4Log(ts *testscript.TestScript, neg bool, args []string) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	ts.Fatalf("pattern %q did not appear in %s", args[0], args[1])
+}
+
+func cmdBackdate(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) != 2 {
+		ts.Fatalf("usage: backdate <object> <rfc3339>")
+	}
+	t, err := time.Parse(time.RFC3339, args[1])
+	ts.Check(err)
+	ts.Check(os.Setenv("CEPH_CONF", ts.Getenv("CEPH_CONF")))
+	ioctx, err := openPool(ts.Getenv("NIX_RADOS_CACHE_POOL"))
+	ts.Check(err)
+	op := rados.CreateWriteOp()
+	defer op.Release()
+	op.SetXattr(accessedXattr, []byte(args[1]))
+	ts.Check(op.OperateWithMtime(ioctx, args[0], rados.Timespec{Sec: t.Unix()}, rados.OperationNoFlag))
 }
 
 func cmdBinFile(ts *testscript.TestScript, neg bool, args []string) {

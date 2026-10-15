@@ -49,7 +49,7 @@ Stripe 0 carries the xattrs:
 
 Readers take `S` from `striper.layout.object_size`, never from the running server's flag, so NARs written under a different stripe size stay readable.
 
-Stripes 1 and up are written first, each as one full-object write. Stripe 0 is written last, exclusively, with its xattrs and data in a single operation, and is the completion marker: a NAR exists once stripe 0 exists, and a reader never sees a partial NAR. A duplicate upload rewrites identical bytes to stripes 1 and up (NAR names are content hashes) and stops at stripe 0, which is never overwritten. Stripes without a stripe 0 are leftovers from a failed upload; nothing reads them and a future garbage collector may delete them.
+Stripes 1 and up are written first, each as one full-object write. Stripe 0 is written last, exclusively, with its xattrs and data in a single operation, and is the completion marker: a NAR exists once stripe 0 exists, and a reader never sees a partial NAR. A duplicate upload rewrites identical bytes to stripes 1 and up (NAR names are content hashes) and stops at stripe 0, which is never overwritten. Stripes without a stripe 0 are leftovers from a failed upload; nothing reads them.
 
 `S` must not exceed the cluster's `osd_max_object_size`, and `S` plus the xattrs written with stripe 0 must fit within `osd_max_write_size`; a stripe the OSD refuses fails the upload.
 
@@ -60,6 +60,10 @@ These xattrs live on a plain object or on stripe 0 of a NAR. `created` is when t
 The object's own RADOS mtime is updated by these xattr writes, so it records when the object was last touched, not when its content was written.
 
 `upstream` is the base URL the object was pulled from. With `--upstream` configured, a local miss is fetched from the first upstream that has it, stored unchanged with its signatures, and served in the same request.
+
+## Garbage collection
+
+A collector is a separate process on the pool that runs with or without servers and takes no locks. It deletes nothing whose mtime is within its age limit, which keeps uploads and re-uploads in flight safe. Beyond that limit a plain object is deleted on age alone; a NAR is deleted when no remaining narinfo's `URL:` names it, stripe 0 first; a stripe whose stripe 0 is gone is deleted on its own. Every delete is conditional on the object version the collector observed, so an object a request touches during the run survives it. Foreign names are never deleted.
 
 ## Integrity
 
