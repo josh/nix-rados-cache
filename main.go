@@ -264,6 +264,7 @@ func (h *handler) setAccess(name string, s *reqStats) {
 	count++
 	op := rados.CreateWriteOp()
 	defer op.Release()
+	op.AssertExists()
 	stampAccess(op, count)
 	if err := op.Operate(h.ioctx, name, rados.OperationNoFlag); err != nil {
 		slog.Error("access count", "object", name, "error", err)
