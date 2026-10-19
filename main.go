@@ -483,6 +483,11 @@ func stripeName(name string, i int) string {
 }
 
 func putNAR(ioctx *rados.IOContext, name string, body io.Reader, stripeSize int, upstream string, calls *int) error {
+	*calls++
+	if _, err := ioctx.Stat(stripeName(name, 0)); err == nil {
+		_, err = io.Copy(io.Discard, body)
+		return cmp.Or[error](err, rados.ErrObjectExists)
+	}
 	var first []byte
 	buf := make([]byte, stripeSize)
 	total := 0

@@ -49,7 +49,7 @@ Stripe 0 carries the xattrs:
 
 Readers take `S` from `striper.layout.object_size`, never from their own configuration, so NARs written under a different stripe size stay readable.
 
-Stripes 1 and up are written first, each as one full-object write. Stripe 0 is written last, exclusively, with its xattrs and data in a single operation, and is the completion marker: a NAR exists once stripe 0 exists, and a reader never sees a partial NAR. A duplicate upload rewrites identical bytes to stripes 1 and up (NAR names are content hashes) and stops at stripe 0, which is never overwritten. Stripes without a stripe 0 are leftovers from a failed upload; nothing reads them.
+Stripes 1 and up are written first, each as one full-object write. Stripe 0 is written last, exclusively, with its xattrs and data in a single operation, and is the completion marker: a NAR exists once stripe 0 exists, and a reader never sees a partial NAR. An upload of a NAR whose stripe 0 already exists writes nothing, so stripes laid out under one stripe size are never partly rewritten under another; two writers racing to upload the same new NAR must share a stripe size. Stripes without a stripe 0 are leftovers from a failed upload; nothing reads them.
 
 `S` must not exceed the cluster's `osd_max_object_size`, and `S` plus the xattrs written with stripe 0 must fit within `osd_max_write_size`; a stripe the OSD refuses fails the upload.
 

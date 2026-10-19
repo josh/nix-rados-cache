@@ -24,6 +24,16 @@ stdout -count=4 '^nar/four'
 kill -INT small
 wait
 
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --stripe-size 524288 --log-file server.log &smaller&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file four.nar.xz http://127.0.0.1:$PORT/nar/four.nar.xz
+stdout '^200$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=4 '^nar/four'
+kill -INT smaller
+wait
+
 exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &server&
 wait4http http://127.0.0.1:$PORT/nix-cache-info
 
@@ -31,7 +41,7 @@ exec curl --silent --head http://127.0.0.1:$PORT/nar/four.nar.xz
 stdout 'Content-Length: 3145729'
 exec curl --silent --fail --output four-downloaded.nar.xz http://127.0.0.1:$PORT/nar/four.nar.xz
 bin-cmp four.nar.xz four-downloaded.nar.xz
-wait4log 'msg=request method=GET path=/nar/four.nar.xz status=200 .* resp_bytes=3145729 rados_calls=7 access_count=3' server.log
+wait4log 'msg=request method=GET path=/nar/four.nar.xz status=200 .* resp_bytes=3145729 rados_calls=7 access_count=4' server.log
 
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL setxattr nar/four.nar.xz.0000000000000000 striper.layout.object_size 0
 exec curl --silent --write-out '%{http_code}' --output /dev/null http://127.0.0.1:$PORT/nar/four.nar.xz
