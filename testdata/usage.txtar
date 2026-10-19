@@ -31,6 +31,21 @@ stderr 'invalid trusted public key'
 ! exec nix-rados-cache --pool no-such-pool --log-file $WORK/nonexistent/server.log
 stderr 'open log file'
 
+! exec nix-rados-cache --pool no-such-pool --config $WORK/nonexistent.json
+stderr 'no such file'
+
+! exec nix-rados-cache --pool no-such-pool --config bad.json
+stderr 'unexpected end of JSON input'
+
+! exec nix-rados-cache --pool no-such-pool --config unknown.json
+stderr 'no such flag'
+
+! exec nix-rados-cache --pool no-such-pool --config badvalue.json
+stderr 'stripe-size: parse error'
+
+! exec nix-rados-cache --config pool.json
+stderr 'open pool'
+
 env CEPH_CONF=$WORK/empty-ceph.conf
 ! exec nix-rados-cache --pool no-such-pool
 stderr 'connect to ceph'
@@ -41,3 +56,11 @@ stderr 'read ceph config'
 
 -- empty-ceph.conf --
 [global]
+-- bad.json --
+{
+-- unknown.json --
+{"bogus": 1}
+-- badvalue.json --
+{"stripe-size": "big"}
+-- pool.json --
+{"pool": "no-such-pool"}

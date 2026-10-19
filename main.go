@@ -62,6 +62,7 @@ func main() {
 	shutdownTimeout := flag.Duration("shutdown-timeout", 30*time.Second, "how long in-flight requests may finish after a shutdown signal")
 	ioTimeout := flag.Duration("io-timeout", 30*time.Second, "longest pause allowed while reading a request body or writing a response")
 	maxUploads := flag.Int("max-uploads", 8, "uploads handled at once; the rest wait")
+	configFile := flag.String("config", "", "JSON file of settings keyed by flag name; a flag given on the command line wins")
 	keys := trustedKeysFlag(flag.CommandLine)
 	var upstreams []string
 	flag.Func("upstream", "cache to pull misses from; repeatable, tried in order", func(s string) error {
@@ -72,6 +73,12 @@ func main() {
 		return nil
 	})
 	flag.Parse()
+	if *configFile != "" {
+		if err := applyConfig(flag.CommandLine, *configFile); err != nil {
+			fmt.Fprintln(os.Stderr, "config:", err)
+			os.Exit(1)
+		}
+	}
 
 	var logOut io.Writer = os.Stderr
 	if *logFile != "" {
@@ -290,6 +297,38 @@ func gc(args []string) {
 		}
 	}
 	slog.Info("gc", "deleted", deleted, "freed", freed)
+}
+
+func applyConfig(fs *flag.FlagSet, path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var settings map[string]json.RawMessage
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return err
+	}
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	for name, raw := range settings {
+		if given[name] {
+			continue
+		}
+		values := []json.RawMessage{raw}
+		if raw[0] == '[' {
+			_ = json.Unmarshal(raw, &values)
+		}
+		for _, v := range values {
+			s := string(v)
+			if v[0] == '"' {
+				_ = json.Unmarshal(v, &s)
+			}
+			if err := fs.Set(name, s); err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+		}
+	}
+	return nil
 }
 
 func trustedKeysFlag(fs *flag.FlagSet) map[string]ed25519.PublicKey {
