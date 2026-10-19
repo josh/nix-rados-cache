@@ -170,7 +170,7 @@ func cmdTailLogs(ts *testscript.TestScript, neg bool, args []string) {
 		data, _ := os.ReadFile(ts.MkAbs("server.log"))
 		log("[nix-rados-cache]", data)
 		data, _ = io.ReadAll(cephLog)
-		log("[ceph]", data)
+		log("[ceph]", data[max(0, len(data)-32<<10):])
 	})
 	_, err = cephLog.Seek(0, io.SeekEnd)
 	ts.Check(err)
