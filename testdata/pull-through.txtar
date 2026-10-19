@@ -3,7 +3,7 @@
 tail-logs
 create-pool
 
-exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --upstream https://cache.nixos.org --log-file server.log &server&
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --upstream https://cache.nixos.org --trusted-public-key cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= --log-file server.log &server&
 wait4http http://127.0.0.1:$PORT/nix-cache-info
 
 exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 /nix/store/yh6x9ia5kxxw3w90vkb09vqgfvhb416k-hello-2.12.1

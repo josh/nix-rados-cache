@@ -25,6 +25,9 @@ stderr 'max-uploads'
 ! exec nix-rados-cache --pool no-such-pool --upstream cache.nixos.org
 stderr 'invalid upstream'
 
+! exec nix-rados-cache --pool no-such-pool --trusted-public-key bogus
+stderr 'invalid trusted public key'
+
 ! exec nix-rados-cache --pool no-such-pool --log-file $WORK/nonexistent/server.log
 stderr 'open log file'
 

@@ -3,12 +3,15 @@ package main
 import (
 	"cmp"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -59,6 +62,7 @@ func main() {
 	shutdownTimeout := flag.Duration("shutdown-timeout", 30*time.Second, "how long in-flight requests may finish after a shutdown signal")
 	ioTimeout := flag.Duration("io-timeout", 30*time.Second, "longest pause allowed while reading a request body or writing a response")
 	maxUploads := flag.Int("max-uploads", 8, "uploads handled at once; the rest wait")
+	keys := trustedKeysFlag(flag.CommandLine)
 	var upstreams []string
 	flag.Func("upstream", "cache to pull misses from; repeatable, tried in order", func(s string) error {
 		if u, err := url.Parse(s); err != nil || u.Host == "" {
@@ -104,7 +108,7 @@ func main() {
 		slog.Error("listen", "error", err)
 		os.Exit(1)
 	}
-	srv := &http.Server{Handler: newHandler(ioctx, *stripeSize, *caDerivations, *maxUploads, upstreams, *ioTimeout)}
+	srv := &http.Server{Handler: newHandler(ioctx, *stripeSize, *caDerivations, *maxUploads, upstreams, keys, *ioTimeout)}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -119,7 +123,7 @@ func main() {
 		}
 	}()
 
-	slog.Info("listening", "address", *listen, "pool", *pool, "stripe_size", *stripeSize, "ca_derivations", *caDerivations, "upstreams", upstreams)
+	slog.Info("listening", "address", *listen, "pool", *pool, "stripe_size", *stripeSize, "ca_derivations", *caDerivations, "upstreams", upstreams, "trusted_keys", len(keys))
 	if err := srv.Serve(idleListener{ln, *ioTimeout}); !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
@@ -137,6 +141,7 @@ func gc(args []string) {
 	fs.Func("max-free", "stop evicting once free space reaches this; defaults to --min-free", func(s string) (err error) { maxFree, err = parseSize(s); return })
 	priority := fs.String("priority", "oldest", "evict oldest or largest store paths first")
 	dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
+	keys := trustedKeysFlag(fs)
 	_ = fs.Parse(args)
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if *pool == "" || (*priority != "oldest" && *priority != "largest") {
@@ -198,7 +203,17 @@ func gc(args []string) {
 		if !strings.HasSuffix(name, ".narinfo") {
 			return
 		}
-		data, _ := getObject(ioctx, name, new(int))
+		data, err := getObject(ioctx, name, new(int))
+		if errors.Is(err, rados.ErrNotFound) {
+			return
+		}
+		if err != nil {
+			slog.Error("read narinfo", "object", name, "error", err)
+			os.Exit(1)
+		}
+		if !trustedSig(keys, name, data) && remove(name) {
+			return
+		}
 		p := path{name: name, mtime: stat.ModTime}
 		for line := range strings.Lines(string(data)) {
 			if v, ok := strings.CutPrefix(line, "URL: "); ok {
@@ -261,6 +276,60 @@ func gc(args []string) {
 		}
 	})
 	slog.Info("gc", "deleted", deleted, "freed", freed)
+}
+
+func trustedKeysFlag(fs *flag.FlagSet) map[string]ed25519.PublicKey {
+	keys := map[string]ed25519.PublicKey{}
+	fs.Func("trusted-public-key", "name:base64 of a key whose signature every narinfo must carry; repeatable, none accepts all", func(s string) error {
+		name, b64, _ := strings.Cut(s, ":")
+		key, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil || name == "" || len(key) != ed25519.PublicKeySize {
+			return fmt.Errorf("invalid trusted public key %q", s)
+		}
+		keys[name] = key
+		return nil
+	})
+	return keys
+}
+
+func trustedSig(keys map[string]ed25519.PublicKey, name string, narinfo []byte) bool {
+	if len(keys) == 0 {
+		return true
+	}
+	var path, hash, size string
+	var refs, sigs []string
+	for line := range strings.Lines(string(narinfo)) {
+		switch k, v, _ := strings.Cut(strings.TrimSuffix(line, "\n"), ": "); k {
+		case "StorePath":
+			path = v
+		case "NarHash":
+			hash = v
+		case "NarSize":
+			size = v
+		case "References":
+			refs = strings.Fields(v)
+		case "Sig":
+			sigs = append(sigs, v)
+		}
+	}
+	dir := path[:strings.LastIndex(path, "/")+1]
+	if !strings.HasPrefix(path[len(dir):], strings.TrimSuffix(name, ".narinfo")+"-") {
+		return false
+	}
+	for i := range refs {
+		refs[i] = dir + refs[i]
+	}
+	fingerprint := []byte("1;" + path + ";" + hash + ";" + size + ";" + strings.Join(refs, ","))
+	keys = maps.Clone(keys)
+	for _, s := range sigs {
+		n, b64, _ := strings.Cut(s, ":")
+		sig, err := base64.StdEncoding.DecodeString(b64)
+		if key, ok := keys[n]; ok && err == nil && ed25519.Verify(key, fingerprint, sig) {
+			return true
+		}
+		delete(keys, n)
+	}
+	return false
 }
 
 func parseSize(s string) (int64, error) {
@@ -480,6 +549,7 @@ type handler struct {
 	stripeSize int
 	uploads    chan struct{}
 	upstreams  []string
+	trusted    map[string]ed25519.PublicKey
 	client     *http.Client
 	ioTimeout  time.Duration
 }
@@ -569,6 +639,10 @@ func (h *handler) pullPlain(name string, s *reqStats) ([]byte, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxNarinfoSize))
+	if err == nil && !trustedSig(h.trusted, name, body) {
+		slog.Warn("untrusted upstream narinfo", "url", u, "object", name)
+		return nil, rados.ErrNotFound
+	}
 	if err == nil {
 		err = putObject(h.ioctx, name, body, u, &s.radosCalls)
 	}
@@ -579,10 +653,10 @@ func (h *handler) pullPlain(name string, s *reqStats) ([]byte, error) {
 	return body, nil
 }
 
-func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool, maxUploads int, upstreams []string, ioTimeout time.Duration) http.Handler {
+func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool, maxUploads int, upstreams []string, trusted map[string]ed25519.PublicKey, ioTimeout time.Duration) http.Handler {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 10 * time.Second
-	h := &handler{ioctx: ioctx, stripeSize: stripeSize, uploads: make(chan struct{}, maxUploads), upstreams: upstreams, client: &http.Client{Transport: transport}, ioTimeout: ioTimeout}
+	h := &handler{ioctx: ioctx, stripeSize: stripeSize, uploads: make(chan struct{}, maxUploads), upstreams: upstreams, trusted: trusted, client: &http.Client{Transport: transport}, ioTimeout: ioTimeout}
 	mux := http.NewServeMux()
 	if caDerivations {
 		mux.HandleFunc("GET /build-trace-v2/{drv}/{output}", h.getObject)
@@ -673,6 +747,10 @@ func (h *handler) getObject(w http.ResponseWriter, r *http.Request) {
 	data, err := getObject(h.ioctx, name, &s.radosCalls)
 	if errors.Is(err, rados.ErrNotFound) && strings.HasSuffix(name, ".narinfo") {
 		data, err = h.pullPlain(name, s)
+	}
+	if err == nil && strings.HasSuffix(name, ".narinfo") && !trustedSig(h.trusted, name, data) {
+		slog.Warn("untrusted narinfo", "object", name)
+		err = rados.ErrNotFound
 	}
 	if err != nil {
 		writeStoreError(w, name, err)
@@ -765,6 +843,10 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 		}
 		if slices.ContainsFunc(sigs, func(s string) bool { return !sigLinePattern.MatchString(s) }) {
 			http.Error(w, "malformed Sig line", http.StatusBadRequest)
+			return
+		}
+		if strings.HasSuffix(name, ".narinfo") && !trustedSig(h.trusted, name, data) {
+			http.Error(w, "narinfo lacks a signature by a trusted key", http.StatusForbidden)
 			return
 		}
 		err = putObject(h.ioctx, name, data, "", &s.radosCalls)

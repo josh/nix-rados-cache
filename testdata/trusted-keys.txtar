@@ -1,0 +1,99 @@
+tail-logs
+create-pool
+env UP_POOL=$NIX_RADOS_CACHE_POOL
+create-pool
+
+exec nix key generate-secret --key-name key1
+cp stdout key1.sec
+stdin key1.sec
+exec nix key convert-secret-to-public
+capture-output KEY1_PUB
+exec nix key generate-secret --key-name key2
+cp stdout key2.sec
+stdin key2.sec
+exec nix key convert-secret-to-public
+capture-output KEY2_PUB
+
+exec nix-rados-cache --pool $UP_POOL --listen 127.0.0.1:$PORT2 --log-file upstream.log &upstream&
+wait4http http://127.0.0.1:$PORT2/nix-cache-info
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --upstream http://127.0.0.1:$PORT2 --trusted-public-key $KEY1_PUB --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec nix store add-path --store $WORK/store1 --name other other
+stdout '^/nix/store/8pjpdkixgy5bghm2hpflddxg2vk7y758-other$'
+! exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?secret-key=$WORK/key2.sec /nix/store/8pjpdkixgy5bghm2hpflddxg2vk7y758-other
+stderr '403'
+wait4log 'msg=request method=PUT path=/8pjpdkixgy5bghm2hpflddxg2vk7y758.narinfo status=403' server.log
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^.'
+capture-output OTHER_HEAD '^(nar/.*\.0000000000000000)$'
+
+exec nix store add-path --store $WORK/store1 --name hello fixture
+stdout '^/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello$'
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?secret-key=$WORK/key1.sec /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+exec nix store sign --store http://127.0.0.1:$PORT --key-file key2.sec /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+exec curl --silent --fail --output hello.narinfo http://127.0.0.1:$PORT/9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo
+grep '^Sig: key1:' hello.narinfo
+grep '^Sig: key2:' hello.narinfo
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file hello.narinfo http://127.0.0.1:$PORT/9sc0rbaa4s1snb6bjs4qz47qalf50p4w.narinfo
+stdout '^403$'
+
+exec nix store add-path --store $WORK/store1 --name third third
+capture-output THIRD
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT2?secret-key=$WORK/key2.sec $THIRD
+! exec nix path-info --store http://127.0.0.1:$PORT $THIRD
+wait4log 'msg="untrusted upstream narinfo" url=http://127.0.0.1:[0-9]+ object=[a-z0-9]+\.narinfo' server.log
+exec nix store sign --store http://127.0.0.1:$PORT2 --key-file key1.sec $THIRD
+exec nix path-info --store http://127.0.0.1:$PORT $THIRD
+wait4log 'msg=request method=GET path=/[a-z0-9]+\.narinfo status=200 .* upstream=http://127.0.0.1:[0-9]+' server.log
+
+exec nix store add-path --store $WORK/store1 --name solo solo
+capture-output SOLO
+capture-output SOLO_HASH '^/nix/store/([a-z0-9]+)-solo$'
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?secret-key=$WORK/key1.sec $SOLO
+exec curl --silent --fail http://127.0.0.1:$PORT/$SOLO_HASH.narinfo
+capture-output SOLO_NAR '(?m)^URL: (nar/.*)$'
+kill -INT server
+wait server
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --trusted-public-key $KEY2_PUB --log-file server.log &revoked&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+exec curl --silent --write-out '%{http_code}' --output /dev/null http://127.0.0.1:$PORT/9sc0rbaa4s1snb6bjs4qz47qalf50p4v.narinfo
+stdout '^200$'
+exec curl --silent --write-out '%{http_code}' --output /dev/null http://127.0.0.1:$PORT/$SOLO_HASH.narinfo
+stdout '^404$'
+wait4log 'msg="untrusted narinfo" object='$SOLO_HASH'\.narinfo' server.log
+! exec nix copy --from http://127.0.0.1:$PORT --to $WORK/store2 --trusted-public-keys $KEY1_PUB $SOLO
+exec curl --silent --head http://127.0.0.1:$PORT/$SOLO_NAR
+stdout 'HTTP/1.1 200'
+exec nix copy --from http://127.0.0.1:$PORT --to $WORK/store2 --trusted-public-keys $KEY2_PUB /nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello
+cmp fixture/hello.txt $WORK/store2/nix/store/9sc0rbaa4s1snb6bjs4qz47qalf50p4v-hello/hello.txt
+
+backdate $SOLO_HASH.narinfo 2000-01-01T00:00:00Z
+backdate $SOLO_NAR.0000000000000000 2000-01-01T00:00:00Z
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --trusted-public-key $KEY2_PUB
+stderr 'msg=deleted object='$SOLO_HASH'\.narinfo'
+stderr 'msg=gc deleted=2 freed=0$'
+backdate $OTHER_HEAD 2000-01-01T00:00:00Z
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --trusted-public-key $KEY1_PUB --trusted-public-key $KEY2_PUB
+stderr 'msg=deleted object='$OTHER_HEAD'$'
+stderr 'msg=gc deleted=1 freed=0$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+! stdout $SOLO_HASH
+stdout -count=1 '^9sc0rbaa4s1snb6bjs4qz47qalf50p4v\.narinfo$'
+kill -INT revoked
+wait revoked
+kill -INT upstream
+wait upstream
+
+-- fixture/hello.txt --
+hello from nix-rados-cache
+-- fixture/bin/greet --
+#!/bin/sh
+echo hi
+-- other/other.txt --
+other
+-- third/third.txt --
+third
+-- solo/solo.txt --
+solo
