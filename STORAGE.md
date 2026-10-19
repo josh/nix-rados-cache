@@ -63,7 +63,7 @@ The object's own RADOS mtime is updated by these xattr writes, so it records whe
 
 ## Garbage collection
 
-A collector is a separate process on the pool that runs with or without servers and takes no locks. It deletes nothing whose mtime is within a grace period, which keeps uploads and re-uploads in flight safe. Past the grace period, a plain object older than an optional expiry is deleted on age alone; a listing whose narinfo is gone is deleted; a NAR is deleted when no remaining narinfo's `URL:` names it, stripe 0 first; a stripe whose stripe 0 is gone is deleted on its own. Removing a store path for any other reason means deleting its narinfo; the listing and the NAR follow by those rules. Every delete is conditional on the object version the collector observed, so an object a request touches during the run survives it. Foreign names are never deleted.
+A collector is a separate process on the pool that runs with or without servers and takes no locks. It deletes nothing whose mtime is within a grace period, which keeps uploads and re-uploads in flight safe. Past the grace period, a plain object older than an optional expiry is deleted on age alone; a listing whose narinfo is gone is deleted; a NAR is deleted when no remaining narinfo's `URL:` names it, stripe 0 first; the stripes of a NAR that has no stripe 0 are deleted together once the newest of them is past the grace period, so an upload still writing its stripes is left alone. Removing a store path for any other reason means deleting its narinfo; the listing and the NAR follow by those rules. Every delete is conditional on the object version the collector observed, so an object a request touches during the run survives it. Foreign names are never deleted.
 
 ## Integrity
 

@@ -19,14 +19,17 @@ exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL get $BIG_HASH.narinfo 
 capture-output BIG_NAR 'URL: (nar/\S+)'
 
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put nar/stray.nar.xz.0000000000000001 fixture/hello.txt
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put nar/slow.nar.xz.0000000000000001 fixture/hello.txt
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put nar/slow.nar.xz.0000000000000002 fixture/hello.txt
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put foreign/object fixture/hello.txt
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
-stdout -count=7 '^.'
+stdout -count=9 '^.'
 
 backdate $HELLO_HASH.narinfo 2000-01-01T00:00:00Z
 backdate $HELLO_NAR.0000000000000000 2000-01-01T00:00:00Z
 backdate $BIG_NAR.0000000000000000 2000-01-01T00:00:00Z
 backdate nar/stray.nar.xz.0000000000000001 2000-01-01T00:00:00Z
+backdate nar/slow.nar.xz.0000000000000001 2000-01-01T00:00:00Z
 backdate foreign/object 2000-01-01T00:00:00Z
 
 exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --max-age 1h --dry-run
@@ -35,7 +38,7 @@ stderr 'msg="would delete" object='$HELLO_NAR'.0000000000000000'
 stderr 'msg="would delete" object=nar/stray.nar.xz.0000000000000001'
 stderr 'msg=gc deleted=3'
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
-stdout -count=7 '^.'
+stdout -count=9 '^.'
 
 exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --max-age 1h
 stderr 'msg=deleted object='$HELLO_HASH'.narinfo'
@@ -43,9 +46,10 @@ stderr 'msg=deleted object='$HELLO_NAR'.0000000000000000'
 stderr 'msg=deleted object=nar/stray.nar.xz.0000000000000001'
 stderr 'msg=gc deleted=3'
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
-stdout -count=4 '^.'
+stdout -count=6 '^.'
 stdout -count=1 '^'$BIG_HASH'\.narinfo$'
 stdout -count=2 '^'$BIG_NAR'\.'
+stdout -count=2 '^nar/slow\.nar\.xz\.'
 stdout -count=1 '^foreign/object$'
 
 exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 /nix/store/$BIG_HASH-big
@@ -57,8 +61,9 @@ stderr 'msg=gc deleted=0'
 backdate $BIG_HASH.narinfo 2000-01-01T00:00:00Z
 backdate $BIG_NAR.0000000000000000 2000-01-01T00:00:00Z
 backdate $BIG_NAR.0000000000000001 2000-01-01T00:00:00Z
+backdate nar/slow.nar.xz.0000000000000002 2000-01-01T00:00:00Z
 exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --max-age 1h
-stderr 'msg=gc deleted=3'
+stderr 'msg=gc deleted=5'
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
 stdout -count=1 '^.'
 stdout '^foreign/object$'

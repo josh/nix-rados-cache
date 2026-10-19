@@ -267,14 +267,28 @@ func gc(args []string) {
 			}
 		}
 	})
+	// An upload writes its tail stripes over minutes or hours before stripe 0, so a headless NAR is judged by its newest stripe.
+	orphans, active := map[string][]string{}, map[string]bool{}
 	walk(func(name string) {
 		if !stripePattern.MatchString(name) || strings.HasSuffix(name, head) {
 			return
 		}
-		if _, err := ioctx.Stat(stripeName(name[:len(name)-len(head)], 0)); errors.Is(err, rados.ErrNotFound) {
-			remove(name)
+		nar := name[:len(name)-len(head)]
+		if _, err := ioctx.Stat(stripeName(nar, 0)); !errors.Is(err, rados.ErrNotFound) {
+			return
 		}
+		if stat, err := ioctx.Stat(name); err == nil && !stat.ModTime.Before(grace) {
+			active[nar] = true
+		}
+		orphans[nar] = append(orphans[nar], name)
 	})
+	for nar, names := range orphans {
+		if !active[nar] {
+			for _, name := range names {
+				remove(name)
+			}
+		}
+	}
 	slog.Info("gc", "deleted", deleted, "freed", freed)
 }
 
