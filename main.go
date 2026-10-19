@@ -386,18 +386,22 @@ func openPool(pool string) (*rados.Conn, *rados.IOContext, error) {
 }
 
 func getObject(ioctx *rados.IOContext, name string, calls *int) ([]byte, error) {
-	*calls++
-	stat, err := ioctx.Stat(name)
-	if err != nil {
-		return nil, err
+	for {
+		*calls++
+		stat, err := ioctx.Stat(name)
+		if err != nil {
+			return nil, err
+		}
+		data := make([]byte, stat.Size+1)
+		*calls++
+		n, err := ioctx.Read(name, data, 0)
+		if err != nil {
+			return nil, err
+		}
+		if uint64(n) <= stat.Size {
+			return data[:n], nil
+		}
 	}
-	data := make([]byte, stat.Size)
-	*calls++
-	n, err := ioctx.Read(name, data, 0)
-	if err != nil {
-		return nil, err
-	}
-	return data[:n], nil
 }
 
 func now() []byte {
@@ -428,23 +432,28 @@ func sigLines(narinfo []byte) []string {
 	return sigs
 }
 
-func appendSigs(ioctx *rados.IOContext, name string, sigs []string, calls *int) error {
-	stored, err := getObject(ioctx, name, calls)
-	if err != nil {
-		return err
+func appendSigs(ioctx *rados.IOContext, name string, sigs []string, calls *int) (err error) {
+	for attempt := 1; ; attempt++ {
+		var stored []byte
+		if stored, err = getObject(ioctx, name, calls); err != nil {
+			return err
+		}
+		version, _ := ioctx.GetLastVersion()
+		existing := sigLines(stored)
+		add := slices.DeleteFunc(slices.Clone(sigs), func(s string) bool { return slices.Contains(existing, s) })
+		if len(add) == 0 {
+			return nil
+		}
+		op := rados.CreateWriteOp()
+		op.AssertVersion(version)
+		op.WriteFull(append(stored, strings.Join(add, "\n")+"\n"...))
+		*calls++
+		err = op.Operate(ioctx, name, rados.OperationNoFlag)
+		op.Release()
+		if err == nil || attempt == 3 {
+			return err
+		}
 	}
-	version, _ := ioctx.GetLastVersion()
-	existing := sigLines(stored)
-	add := slices.DeleteFunc(slices.Clone(sigs), func(s string) bool { return slices.Contains(existing, s) })
-	if len(add) == 0 {
-		return nil
-	}
-	op := rados.CreateWriteOp()
-	defer op.Release()
-	op.AssertVersion(version)
-	op.WriteFull(append(stored, strings.Join(add, "\n")+"\n"...))
-	*calls++
-	return op.Operate(ioctx, name, rados.OperationNoFlag)
 }
 
 func stripeName(name string, i int) string {
@@ -843,6 +852,10 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 		}
 		if slices.ContainsFunc(sigs, func(s string) bool { return !sigLinePattern.MatchString(s) }) {
 			http.Error(w, "malformed Sig line", http.StatusBadRequest)
+			return
+		}
+		if strings.HasSuffix(name, ".narinfo") && (len(data) == 0 || data[len(data)-1] != '\n') {
+			http.Error(w, "narinfo must end with a newline", http.StatusBadRequest)
 			return
 		}
 		if strings.HasSuffix(name, ".narinfo") && !trustedSig(h.trusted, name, data) {

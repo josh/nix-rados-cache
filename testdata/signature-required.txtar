@@ -19,6 +19,10 @@ exec nix nar pack fixture
 cp stdout signed.nar
 exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file signed.nar http://127.0.0.1:$PORT/nar/signed.nar
 stdout '^201$'
+exec head -c -1 signed.narinfo
+cp stdout nonl.narinfo
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file nonl.narinfo http://127.0.0.1:$PORT/signd000000000000000000000000000.narinfo
+stdout '^400$'
 exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file signed.narinfo http://127.0.0.1:$PORT/signd000000000000000000000000000.narinfo
 stdout '^201$'
 
