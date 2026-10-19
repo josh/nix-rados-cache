@@ -6,7 +6,7 @@ This document specifies how a Nix binary cache is stored in RADOS. It is the con
 
 ## Isolation model
 
-A cache is a single RADOS pool, using the default namespace. Object names carry no cache name, prefix, magic value, or format version. Two caches that share a pool overlap completely and corrupt each other. The pool is the isolation mechanism.
+A cache is a single RADOS pool, using the default namespace. Object names carry no cache name, prefix, magic value, or format version. Two caches that share a pool overlap completely and corrupt each other.
 
 ## Object names
 
