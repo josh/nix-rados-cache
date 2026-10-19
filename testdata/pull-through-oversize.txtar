@@ -1,0 +1,13 @@
+tail-logs
+create-pool
+
+bin-file huge.narinfo 16777217
+http-serve 127.0.0.1:$PORT2 huge.narinfo
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --upstream http://127.0.0.1:$PORT2 --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null http://127.0.0.1:$PORT/huge0000000000000000000000000000.narinfo
+stdout '^404$'
+wait4log 'msg=upstream url=http://127.0.0.1:[0-9]+ object=huge0000000000000000000000000000\.narinfo error="object too large"' server.log
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+! stdout '^.'

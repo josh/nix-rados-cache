@@ -669,7 +669,10 @@ func (h *handler) pullPlain(name string, s *reqStats) ([]byte, error) {
 		return nil, rados.ErrNotFound
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxNarinfoSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxNarinfoSize+1))
+	if err == nil && len(body) > maxNarinfoSize {
+		err = errors.New("object too large")
+	}
 	if err != nil {
 		slog.Warn("upstream", "url", u, "object", name, "error", err)
 		return nil, rados.ErrNotFound

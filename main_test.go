@@ -103,6 +103,7 @@ func TestScript(t *testing.T) {
 					"capture-output": cmdCaptureOutput,
 					"create-pool":    cmdCreatePool,
 					"http-hold":      cmdHTTPHold,
+					"http-serve":     cmdHTTPServe,
 					"http-stall":     cmdHTTPStall,
 					"tail-logs":      cmdTailLogs,
 					"wait4http":      cmdWait4HTTP,
@@ -336,6 +337,19 @@ func cmdHTTPStall(ts *testscript.TestScript, neg bool, args []string) {
 				_, _ = io.Copy(io.Discard, conn)
 			}()
 		}
+	}()
+}
+
+func cmdHTTPServe(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) != 2 {
+		ts.Fatalf("usage: http-serve <addr> <file>")
+	}
+	ln, err := net.Listen("tcp", args[0])
+	ts.Check(err)
+	ts.Defer(func() { _ = ln.Close() })
+	file := ts.MkAbs(args[1])
+	go func() {
+		_ = http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, file) }))
 	}()
 }
 
