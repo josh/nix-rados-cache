@@ -422,15 +422,19 @@ func now() []byte {
 	return []byte(time.Now().UTC().Format(time.RFC3339))
 }
 
-func putObject(ioctx *rados.IOContext, name string, data []byte, upstream string, calls *int) error {
-	op := rados.CreateWriteOp()
-	defer op.Release()
+func stampNew(op *rados.WriteOp, upstream string) {
 	op.Create(rados.CreateExclusive)
 	op.SetXattr(createdXattr, now())
 	stampAccess(op, 1)
 	if upstream != "" {
 		op.SetXattr(upstreamXattr, []byte(upstream))
 	}
+}
+
+func putObject(ioctx *rados.IOContext, name string, data []byte, upstream string, calls *int) error {
+	op := rados.CreateWriteOp()
+	defer op.Release()
+	stampNew(op, upstream)
 	op.WriteFull(data)
 	*calls++
 	return op.Operate(ioctx, name, rados.OperationNoFlag)
@@ -508,16 +512,11 @@ func putNAR(ioctx *rados.IOContext, name string, body io.Reader, stripeSize int,
 	size := []byte(strconv.Itoa(stripeSize))
 	op := rados.CreateWriteOp()
 	defer op.Release()
-	op.Create(rados.CreateExclusive)
+	stampNew(op, upstream)
 	op.SetXattr("striper.layout.stripe_unit", size)
 	op.SetXattr("striper.layout.stripe_count", []byte("1"))
 	op.SetXattr(stripeSizeXattr, size)
 	op.SetXattr(sizeXattr, []byte(strconv.Itoa(total)))
-	op.SetXattr(createdXattr, now())
-	stampAccess(op, 1)
-	if upstream != "" {
-		op.SetXattr(upstreamXattr, []byte(upstream))
-	}
 	op.WriteFull(first)
 	*calls++
 	return op.Operate(ioctx, stripeName(name, 0), rados.OperationNoFlag)
