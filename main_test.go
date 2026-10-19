@@ -473,6 +473,7 @@ osd_pool_default_size = 1
 osd_pool_default_min_size = 1
 osd_crush_chooseleaf_type = 0
 mon_allow_pool_size_one = true
+rados_osd_op_timeout = 60
 
 [mon]
 mon_initial_members = mon1
