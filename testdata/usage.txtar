@@ -43,6 +43,9 @@ stderr 'no such flag'
 ! exec nix-rados-cache --pool no-such-pool --config badvalue.json
 stderr 'stripe-size: parse error'
 
+! exec nix-rados-cache --pool no-such-pool --config null.json
+stderr 'log-file: unsupported value null'
+
 ! exec nix-rados-cache --config pool.json
 stderr 'open pool'
 
@@ -62,5 +65,7 @@ stderr 'read ceph config'
 {"bogus": 1}
 -- badvalue.json --
 {"stripe-size": "big"}
+-- null.json --
+{"log-file": null}
 -- pool.json --
 {"pool": "no-such-pool"}

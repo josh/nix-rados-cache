@@ -319,6 +319,9 @@ func applyConfig(fs *flag.FlagSet, path string) error {
 			_ = json.Unmarshal(raw, &values)
 		}
 		for _, v := range values {
+			if strings.IndexByte("{[n", v[0]) >= 0 {
+				return fmt.Errorf("%s: unsupported value %s", name, v)
+			}
 			s := string(v)
 			if v[0] == '"' {
 				_ = json.Unmarshal(v, &s)
