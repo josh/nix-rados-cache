@@ -607,18 +607,16 @@ func (g stallGuard) Close() error {
 func (h *handler) fetch(method, path string) (*http.Response, string) {
 	for _, u := range h.upstreams {
 		ctx, cancel := context.WithCancel(context.Background())
-		timer := time.AfterFunc(h.ioTimeout, cancel)
 		req, _ := http.NewRequestWithContext(ctx, method, u+"/"+path, nil)
 		resp, err := h.client.Do(req)
 		if err != nil {
 			slog.Warn("upstream", "url", u, "path", path, "error", err)
 		} else if resp.StatusCode == http.StatusOK {
-			resp.Body = stallGuard{resp.Body, timer, h.ioTimeout, cancel}
+			resp.Body = stallGuard{resp.Body, time.AfterFunc(h.ioTimeout, cancel), h.ioTimeout, cancel}
 			return resp, u
 		} else {
 			_ = resp.Body.Close()
 		}
-		timer.Stop()
 		cancel()
 	}
 	return nil, ""
