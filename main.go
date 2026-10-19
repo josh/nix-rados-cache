@@ -664,6 +664,7 @@ func (h *handler) pullPlain(name string, s *reqStats) ([]byte, error) {
 
 func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool, maxUploads int, upstreams []string, trusted map[string]ed25519.PublicKey, ioTimeout time.Duration) http.Handler {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
 	transport.ResponseHeaderTimeout = 10 * time.Second
 	h := &handler{ioctx: ioctx, stripeSize: stripeSize, uploads: make(chan struct{}, maxUploads), upstreams: upstreams, trusted: trusted, client: &http.Client{Transport: transport}, ioTimeout: ioTimeout}
 	mux := http.NewServeMux()
