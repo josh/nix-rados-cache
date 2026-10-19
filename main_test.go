@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -333,6 +334,7 @@ func cmdHTTPStall(ts *testscript.TestScript, neg bool, args []string) {
 			}
 			go func() {
 				defer func() { _ = conn.Close() }()
+				_, _ = http.ReadRequest(bufio.NewReader(conn))
 				_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
 				_, _ = io.Copy(io.Discard, conn)
 			}()
