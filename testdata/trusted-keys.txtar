@@ -38,6 +38,14 @@ grep '^Sig: key2:' hello.narinfo
 exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file hello.narinfo http://127.0.0.1:$PORT/9sc0rbaa4s1snb6bjs4qz47qalf50p4w.narinfo
 stdout '^403$'
 
+exec nix build --impure --no-link --print-out-paths --file withref.nix
+capture-output WITHREF
+capture-output WITHREF_HASH '^/nix/store/([a-z0-9]+)-withref$'
+exec nix copy --to http://127.0.0.1:$PORT?secret-key=$WORK/key1.sec $WITHREF
+exec curl --silent --fail http://127.0.0.1:$PORT/$WITHREF_HASH.narinfo
+stdout '^References: [a-z0-9]+-dep[12] [a-z0-9]+-dep[12]$'
+stdout '^Sig: key1:'
+
 exec nix store add-path --store $WORK/store1 --name third third
 capture-output THIRD
 exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT2?secret-key=$WORK/key2.sec $THIRD
@@ -91,6 +99,8 @@ hello from nix-rados-cache
 -- fixture/bin/greet --
 #!/bin/sh
 echo hi
+-- withref.nix --
+derivation { name = "withref"; system = builtins.currentSystem; builder = "/bin/sh"; args = [ "-c" "echo ${builtins.toFile "dep1" "1"} ${builtins.toFile "dep2" "2"} > $out" ]; }
 -- other/other.txt --
 other
 -- third/third.txt --
