@@ -458,9 +458,13 @@ func appendSigs(ioctx *rados.IOContext, name string, sigs []string, calls *int) 
 		if len(add) == 0 {
 			return nil
 		}
+		merged := append(stored, strings.Join(add, "\n")+"\n"...)
+		if len(merged) > maxNarinfoSize {
+			return &http.MaxBytesError{Limit: maxNarinfoSize}
+		}
 		op := rados.CreateWriteOp()
 		op.AssertVersion(version)
-		op.WriteFull(append(stored, strings.Join(add, "\n")+"\n"...))
+		op.WriteFull(merged)
 		*calls++
 		err = op.Operate(ioctx, name, rados.OperationNoFlag)
 		op.Release()
@@ -888,6 +892,8 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 			name = stripeName(name, 0)
 		}
 		h.setAccess(name, s)
+	case errors.As(err, new(*http.MaxBytesError)):
+		http.Error(w, "object too large", http.StatusRequestEntityTooLarge)
 	case err != nil:
 		writeStoreError(w, name, err)
 	default:
