@@ -191,6 +191,7 @@ func gc(args []string) {
 		mtime     time.Time
 	}
 	var paths []path
+	refs := map[string]int{}
 	walk(func(name string) {
 		if !plainPattern.MatchString(name) {
 			return
@@ -223,7 +224,9 @@ func gc(args []string) {
 				p.size, _ = strconv.ParseInt(strings.TrimSpace(v), 10, 64)
 			}
 		}
-		stored += p.size
+		if refs[p.url]++; refs[p.url] == 1 {
+			stored += p.size
+		}
 		paths = append(paths, p)
 	})
 	if minFree > 0 {
@@ -241,25 +244,22 @@ func gc(args []string) {
 				}
 				return a.mtime.Compare(b.mtime)
 			})
-			for i, p := range paths {
+			for _, p := range paths {
 				if free+freed >= max(maxFree, minFree) {
 					break
 				}
 				if remove(p.name) {
-					freed += p.size
-					paths[i].url = ""
+					if refs[p.url]--; refs[p.url] == 0 {
+						freed += p.size
+					}
 				}
 			}
 		}
 	}
-	live := map[string]bool{}
-	for _, p := range paths {
-		live[p.url] = true
-	}
 	head := stripeName("", 0)
 	walk(func(name string) {
 		switch {
-		case stripePattern.MatchString(name) && strings.HasSuffix(name, head) && !live[strings.TrimSuffix(name, head)]:
+		case stripePattern.MatchString(name) && strings.HasSuffix(name, head) && refs[strings.TrimSuffix(name, head)] == 0:
 			remove(name)
 		case plainPattern.MatchString(name) && strings.HasSuffix(name, ".ls"):
 			if _, err := ioctx.Stat(strings.TrimSuffix(name, ".ls") + ".narinfo"); errors.Is(err, rados.ErrNotFound) {
