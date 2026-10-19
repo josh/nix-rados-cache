@@ -666,14 +666,15 @@ func (h *handler) pullPlain(name string, s *reqStats) ([]byte, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxNarinfoSize))
-	if err == nil && !trustedSig(h.trusted, name, body) {
+	if err != nil {
+		slog.Warn("upstream", "url", u, "object", name, "error", err)
+		return nil, rados.ErrNotFound
+	}
+	if !trustedSig(h.trusted, name, body) {
 		slog.Warn("untrusted upstream narinfo", "url", u, "object", name)
 		return nil, rados.ErrNotFound
 	}
-	if err == nil {
-		err = putObject(h.ioctx, name, body, u, &s.radosCalls)
-	}
-	if err != nil && !errors.Is(err, rados.ErrObjectExists) {
+	if err := putObject(h.ioctx, name, body, u, &s.radosCalls); err != nil && !errors.Is(err, rados.ErrObjectExists) {
 		return nil, err
 	}
 	s.upstream = u

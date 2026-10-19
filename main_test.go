@@ -103,6 +103,7 @@ func TestScript(t *testing.T) {
 					"capture-output": cmdCaptureOutput,
 					"create-pool":    cmdCreatePool,
 					"http-hold":      cmdHTTPHold,
+					"http-stall":     cmdHTTPStall,
 					"tail-logs":      cmdTailLogs,
 					"wait4http":      cmdWait4HTTP,
 					"wait4log":       cmdWait4Log,
@@ -314,6 +315,28 @@ func cmdHTTPHold(ts *testscript.TestScript, neg bool, args []string) {
 	defer func() { _ = conn.Close() }()
 	_, _ = fmt.Fprintf(conn, "PUT %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %s\r\n\r\n", u.RequestURI(), u.Host, args[1])
 	_, _ = io.Copy(io.Discard, conn)
+}
+
+func cmdHTTPStall(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) != 1 {
+		ts.Fatalf("usage: http-stall <addr>")
+	}
+	ln, err := net.Listen("tcp", args[0])
+	ts.Check(err)
+	ts.Defer(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+				_, _ = io.Copy(io.Discard, conn)
+			}()
+		}
+	}()
 }
 
 // Unlike testscript's cmp, this never logs a diff: a failed NAR round trip would dump megabytes of random bytes.
