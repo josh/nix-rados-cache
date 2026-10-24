@@ -10,13 +10,14 @@ exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=zstd $
 exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $CORRUPT
 capture-output NAR "url":"(nar/[^"]+)"
 capture-output SIZE "downloadSize":([0-9]+)
+exec curl --silent --fail --output full http://127.0.0.1:$PORT/$NAR
+exec dd if=full of=short bs=100 count=1 status=none
 bin-file garbage $SIZE
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put $NAR.0000000000000000 garbage
 ! exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $CORRUPT
 stderr 'input compression not recognized'
 ! exists $WORK/store2$CORRUPT
 
-bin-file short 100
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put $NAR.0000000000000000 short
 ! exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $CORRUPT
 stderr 'Transferred a partial file'
