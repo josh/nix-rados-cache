@@ -2,12 +2,12 @@ tail-logs
 create-pool
 
 exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --config server.json &server&
-wait4log 'msg=listening address=127.0.0.1:[0-9]+ pool=test-[0-9a-f]+ stripe_size=4194304 ca_derivations=true upstreams="\[http://127.0.0.1:1 http://127.0.0.1:2\]" trusted_keys=2' server.log
+wait4log 'msg=listening address=127.0.0.1:[0-9]+ pool=test-[0-9a-f]+ stripe_size=4194304 chunk_size=0 ca_derivations=true upstreams="\[http://127.0.0.1:1 http://127.0.0.1:2\]" trusted_keys=2' server.log
 kill -INT server
 wait server
 
 exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --config server.json --stripe-size 65536 --upstream http://127.0.0.1:3 &server&
-wait4log 'msg=listening address=127.0.0.1:[0-9]+ pool=test-[0-9a-f]+ stripe_size=65536 ca_derivations=true upstreams=\[http://127.0.0.1:3\] trusted_keys=2' server.log
+wait4log 'msg=listening address=127.0.0.1:[0-9]+ pool=test-[0-9a-f]+ stripe_size=65536 chunk_size=0 ca_derivations=true upstreams=\[http://127.0.0.1:3\] trusted_keys=2' server.log
 kill -INT server
 wait server
 

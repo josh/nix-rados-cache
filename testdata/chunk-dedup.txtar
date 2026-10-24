@@ -1,0 +1,27 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --chunk-size 64K --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+mkdir fixture
+bin-file fixture/blob 2000000 dedup
+nar-pack fixture a.nar
+cp extra/aaa fixture/aaa
+nar-pack fixture b.nar
+
+exec curl --silent --write-out '%{http_code}' --upload-file a.nar http://127.0.0.1:$PORT/nar/a.nar
+stdout '^201$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=30 '^chunk/'
+
+exec curl --silent --write-out '%{http_code}' --upload-file b.nar http://127.0.0.1:$PORT/nar/b.nar
+stdout '^201$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=31 '^chunk/'
+
+exec curl --silent --fail --output b-downloaded.nar http://127.0.0.1:$PORT/nar/b.nar
+bin-cmp b.nar b-downloaded.nar
+
+-- extra/aaa --
+this entry sorts first and shifts every byte of blob

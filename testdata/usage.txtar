@@ -22,6 +22,9 @@ stderr 'stripe-size'
 ! exec nix-rados-cache --pool no-such-pool --max-uploads 0
 stderr 'max-uploads'
 
+! exec nix-rados-cache --pool no-such-pool --chunk-size 3M
+stderr 'chunk-size'
+
 ! exec nix-rados-cache --pool no-such-pool --upstream cache.nixos.org
 stderr 'invalid upstream'
 

@@ -1,0 +1,31 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --chunk-size 64K --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+mkdir zstd none xz
+bin-file zstd/blob 3000000
+bin-file none/blob 3000000
+bin-file xz/blob 3000000
+exec nix store add-path --store $WORK/store1 --name zstd zstd
+capture-output ZSTD
+exec nix store add-path --store $WORK/store1 --name none none
+capture-output NONE
+exec nix store add-path --store $WORK/store1 --name xz xz
+capture-output XZ
+
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=zstd $ZSTD
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=none $NONE
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT $XZ
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout '^nar/[a-z0-9]+\.nar\.zst$'
+stdout '^nar/[a-z0-9]+\.nar$'
+stdout '^nar/[a-z0-9]+\.nar\.xz\.0000000000000000$'
+stdout -count=3 '^nar/'
+stdout '^chunk/'
+
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $ZSTD $NONE $XZ
+cmp zstd/blob $WORK/store2$ZSTD/blob
+cmp none/blob $WORK/store2$NONE/blob
+cmp xz/blob $WORK/store2$XZ/blob

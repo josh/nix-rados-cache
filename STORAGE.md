@@ -16,9 +16,10 @@ A cache is a single RADOS pool, using the default namespace. Object names carry 
 | `<hash>.ls`          | `<hash>.ls`                                                          |
 | `log/<drv>`          | `log/<drv>`                                                          |
 | `build-trace-v2/<drv>/<output>.doi` | `build-trace-v2/<drv>/<output>.doi`                   |
-| `nar/<name>`         | `nar/<name>.0000000000000000`, `nar/<name>.0000000000000001`, …      |
+| `nar/<name>`         | striped: `nar/<name>.0000000000000000`, `nar/<name>.0000000000000001`, … |
+|                      | chunked: `nar/<name>` plus the `chunk/<sha256>` objects it lists      |
 
-`<hash>`, `<drv>` and `<name>` consist only of `A-Z a-z 0-9 . _ -`. RADOS names are flat; the `/` in `nar/` is an ordinary character. NAR names are whatever the client uploads, typically `<filehash>.nar.xz` or `<filehash>.nar`.
+`<hash>`, `<drv>` and `<name>` consist only of `A-Z a-z 0-9 . _ -`. RADOS names are flat; the `/` in `nar/` is an ordinary character. NAR names are whatever the client uploads, typically `<filehash>.nar.xz` or `<filehash>.nar`. A `nar/` name ending in a dot and sixteen lowercase hex digits is a stripe; any other `nar/` name is a chunked NAR's manifest. `<sha256>` is sixty-four lowercase hex digits.
 
 `nix-cache-info` is never stored, so its absence says nothing about whether the cache exists.
 
@@ -31,6 +32,10 @@ A narinfo, a NAR listing (`.ls`), a build log (`log/<drv>`) and a realisation (`
 A later write of a narinfo changes nothing except that its `Sig:` lines not already present are added at the end, so signatures accumulate and are never removed or reordered; every other field keeps the bytes from the first upload. The merge reads the stored object and rewrites it whole, conditional on the version it read, because RADOS append is unavailable on erasure-coded pools. A later write of a listing, log or realisation changes nothing.
 
 ## NAR objects
+
+A NAR is stored in one of two layouts, striped or chunked. The writer picks the layout; a reader finds out which one a NAR has by which objects exist, so both layouts coexist in a pool and a NAR is never stored in both. A NAR exists once its stripe 0 or its completed manifest exists.
+
+## Striped NAR objects
 
 A NAR is split into fixed-size stripes in the layout of Ceph's libradosstriper, restricted to one object per stripe (`stripe_count` 1, `stripe_unit` equal to `object_size`). Stripe `i` is the object `nar/<name>.<i>` with `i` as sixteen lowercase hex digits, and holds bytes `i·S` up to `(i+1)·S` of the file verbatim, where `S` is the stripe size the writer chose. Only the last stripe is shorter. `rados --striper get` reads a whole NAR.
 
@@ -52,6 +57,24 @@ Readers take `S` from `striper.layout.object_size`, never from their own configu
 Stripes 1 and up are written first, each as one full-object write. Stripe 0 is written last, exclusively, with its xattrs and data in a single operation, and is the completion marker: a NAR exists once stripe 0 exists, and a reader never sees a partial NAR. An upload of a NAR whose stripe 0 already exists writes nothing, so stripes laid out under one stripe size are never partly rewritten under another; two writers racing to upload the same new NAR must share a stripe size. Stripes without a stripe 0 are leftovers from a failed upload; nothing reads them.
 
 `S` must not exceed the cluster's `osd_max_object_size`, and `S` plus the xattrs written with stripe 0 must fit within `osd_max_write_size`; a stripe the OSD refuses fails the upload.
+
+## Chunked NAR objects
+
+The uncompressed NAR is cut into content-defined chunks. Each chunk is stored as the object `chunk/<sha256>`, where `<sha256>` is the SHA-256 of the chunk's uncompressed bytes, holding one zstd frame that decompresses to the chunk. Chunk objects have no xattrs and are shared by every NAR that contains the same bytes; writing one that already exists rewrites it with identical content.
+
+The manifest `nar/<name>` lists the chunks in order as fixed 40-byte records: the 32-byte SHA-256, the uncompressed length and the compressed length, both unsigned 32-bit little-endian. It carries the xattrs:
+
+| xattr          | value                                                                 |
+|----------------|-----------------------------------------------------------------------|
+| `codec`        | `none` or `zstd`: how the NAR was uploaded and how it is served       |
+| `striper.size` | length in bytes of the served NAR                                     |
+| `created`, `upstream`, `access_count`, `accessed` | as for stripe 0                    |
+
+A NAR with codec `none` is served as the concatenation of the decompressed chunks and `striper.size` is the sum of the uncompressed lengths. A NAR with codec `zstd` is served as the concatenation of the stored frames, which is a valid zstd stream decoding to the NAR, and `striper.size` is the sum of the compressed lengths; the served bytes differ from the bytes the client uploaded. A NAR uploaded under any other compression is stored striped.
+
+The chunks are written first, then the manifest with its xattrs in a single operation; the manifest is complete once it carries `striper.size`, and a reader treats a manifest without it as absent. While an upload is in flight the writer rewrites the manifest without `striper.size` after every `S` bytes of input, where `S` is its stripe size, so the manifest's mtime shows the upload is alive. Two writers uploading the same NAR produce the same chunks and prefix-compatible manifests, so neither corrupts the other. Chunks listed by no complete manifest are leftovers from a failed upload.
+
+The chunker is FastCDC with normalised chunking level 1 over a 64-bit gear hash. The gear table entry for byte value `i` is the first eight bytes, little-endian, of the SHA-256 of the single byte `i`. For an average chunk size `A`, a power of two with `b = log2(A)`, the minimum is `A/4` and the maximum `4·A`. The hash starts at zero for each chunk; for each byte after the first `A/4`, `h = h·2 + gear[byte]` modulo 2^64, and the chunk ends after that byte when the top `b+1` bits of `h` are zero before offset `A` or the top `b-1` bits are zero from offset `A` on. A chunk is cut at `4·A` bytes if no boundary came first, and the last chunk ends at the end of the NAR. Only writers using the same `A` share chunks; any `A` keeps every NAR readable. A chunk the OSD refuses fails the upload.
 
 ## Access metadata
 
@@ -78,6 +101,9 @@ rados -p nixcache ls
 rados -p nixcache --striper get 'nar/<name>' nar.xz
 rados -p nixcache getxattr 'nar/<name>.0000000000000000' striper.size
 rados -p nixcache getxattr 'nar/<name>.0000000000000000' access_count
+rados -p nixcache getxattr 'nar/<name>' codec
+rados -p nixcache get 'nar/<name>' - | xxd | head
+rados -p nixcache get 'chunk/<sha256>' - | zstd -d | head -c 64
 rados -p nixcache get '<hash>.narinfo' - | head
 rados -p nixcache get '<hash>.ls' -
 ```

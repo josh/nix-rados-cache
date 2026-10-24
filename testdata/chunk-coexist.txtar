@@ -1,0 +1,42 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &striped&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+mkdir a b
+bin-file a/blob 300000 coexist-a
+bin-file b/blob 300000 coexist-b
+nar-pack a a.nar
+nar-pack b b.nar
+
+exec curl --silent --write-out '%{http_code}' --upload-file a.nar http://127.0.0.1:$PORT/nar/a.nar
+stdout '^201$'
+kill -INT striped
+wait striped
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --chunk-size 64K --log-file server.log &chunked&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+exec curl --silent --fail --output a-from-chunked.nar http://127.0.0.1:$PORT/nar/a.nar
+bin-cmp a.nar a-from-chunked.nar
+exec curl --silent --write-out '%{http_code}' --upload-file a.nar http://127.0.0.1:$PORT/nar/a.nar
+stdout '^200$'
+exec curl --silent --write-out '%{http_code}' --upload-file b.nar http://127.0.0.1:$PORT/nar/b.nar
+stdout '^201$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^nar/a\.nar'
+stdout '^nar/a\.nar\.0000000000000000$'
+stdout -count=1 '^nar/b\.nar'
+stdout '^nar/b\.nar$'
+stdout '^chunk/'
+kill -INT chunked
+wait chunked
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --log-file server.log &striped2&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+exec curl --silent --fail --output b-from-striped.nar http://127.0.0.1:$PORT/nar/b.nar
+bin-cmp b.nar b-from-striped.nar
+exec curl --silent --write-out '%{http_code}' --upload-file b.nar http://127.0.0.1:$PORT/nar/b.nar
+stdout '^200$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^nar/b\.nar'

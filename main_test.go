@@ -106,6 +106,7 @@ func TestScript(t *testing.T) {
 					"http-hold":      cmdHTTPHold,
 					"http-serve":     cmdHTTPServe,
 					"http-stall":     cmdHTTPStall,
+					"nar-pack":       cmdNarPack,
 					"tail-logs":      cmdTailLogs,
 					"wait4http":      cmdWait4HTTP,
 					"wait4log":       cmdWait4Log,
@@ -250,25 +251,42 @@ func cmdWait4Log(ts *testscript.TestScript, neg bool, args []string) {
 
 func cmdBackdate(ts *testscript.TestScript, neg bool, args []string) {
 	if neg || len(args) != 2 {
-		ts.Fatalf("usage: backdate <object> <rfc3339>")
+		ts.Fatalf("usage: backdate <object|prefix/> <rfc3339>")
 	}
 	t, err := time.Parse(time.RFC3339, args[1])
 	ts.Check(err)
 	ts.Check(os.Setenv("CEPH_CONF", ts.Getenv("CEPH_CONF")))
 	_, ioctx, err := openPool(ts.Getenv("NIX_RADOS_CACHE_POOL"))
 	ts.Check(err)
-	op := rados.CreateWriteOp()
-	defer op.Release()
-	op.SetXattr(accessedXattr, []byte(args[1]))
-	ts.Check(op.OperateWithMtime(ioctx, args[0], rados.Timespec{Sec: t.Unix()}, rados.OperationNoFlag))
+	names := []string{args[0]}
+	if strings.HasSuffix(args[0], "/") {
+		names = nil
+		ts.Check(ioctx.ListObjects(func(name string) {
+			if strings.HasPrefix(name, args[0]) {
+				names = append(names, name)
+			}
+		}))
+	}
+	for _, name := range names {
+		op := rados.CreateWriteOp()
+		op.SetXattr(accessedXattr, []byte(args[1]))
+		ts.Check(op.OperateWithMtime(ioctx, name, rados.Timespec{Sec: t.Unix()}, rados.OperationNoFlag))
+		op.Release()
+	}
 }
 
 func cmdBinFile(ts *testscript.TestScript, neg bool, args []string) {
 	if neg {
 		ts.Fatalf("unsupported: ! bin-file")
 	}
-	if len(args) != 2 {
-		ts.Fatalf("usage: bin-file <path> <size-bytes>")
+	if len(args) != 2 && len(args) != 3 {
+		ts.Fatalf("usage: bin-file <path> <size-bytes> [seed]")
+	}
+	var src io.Reader = rand.Reader
+	if len(args) == 3 {
+		var seed [32]byte
+		copy(seed[:], args[2])
+		src = mathrand.NewChaCha8(seed)
 	}
 	size, err := strconv.Atoi(args[1])
 	if err != nil {
@@ -279,9 +297,22 @@ func cmdBinFile(ts *testscript.TestScript, neg bool, args []string) {
 		ts.Fatalf("failed to create file: %v", err)
 	}
 	defer func() { _ = file.Close() }()
-	if _, err := io.Copy(file, io.LimitReader(rand.Reader, int64(size))); err != nil {
+	if _, err := io.Copy(file, io.LimitReader(src, int64(size))); err != nil {
 		ts.Fatalf("failed to write file: %v", err)
 	}
+}
+
+// nar-pack writes a NAR of a directory to a file so the binary never lands in the script's stdout.
+func cmdNarPack(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) != 2 {
+		ts.Fatalf("usage: nar-pack <dir> <file>")
+	}
+	file, err := os.Create(ts.MkAbs(args[1]))
+	ts.Check(err)
+	defer func() { _ = file.Close() }()
+	cmd := exec.Command("nix", "nar", "pack", ts.MkAbs(args[0]))
+	cmd.Stdout, cmd.Stderr = file, os.Stderr
+	ts.Check(cmd.Run())
 }
 
 func cmdCaptureOutput(ts *testscript.TestScript, neg bool, args []string) {

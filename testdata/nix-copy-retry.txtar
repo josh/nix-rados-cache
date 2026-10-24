@@ -21,11 +21,11 @@ exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL rm $NAR.00000000000000
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
 stdout -count=1 '^nar/'
 ! exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $BIG
-wait4log 'msg=request method=GET path=/nar/[^ ]+ status=404 .* rados_calls=1' server.log
+wait4log 'msg=request method=GET path=/nar/[^ ]+ status=404 .* rados_calls=2' server.log
 
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL rm $HASH.narinfo
 exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT?compression=none $BIG
-wait4log 'msg=request method=PUT path=/nar/[^ ]+ status=201 .* rados_calls=3' server.log
+wait4log 'msg=request method=PUT path=/nar/[^ ]+ status=201 .* rados_calls=4' server.log
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
 stdout -count=2 '^nar/'
 

@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"cmp"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -39,6 +43,9 @@ const (
 	upstreamXattr    = "upstream"
 	sizeXattr        = "striper.size"
 	stripeSizeXattr  = "striper.layout.object_size"
+	codecXattr       = "codec"
+	narMagic         = "\r\x00\x00\x00\x00\x00\x00\x00nix-archive-1"
+	zstdMagic        = "\x28\xb5\x2f\xfd"
 )
 
 var (
@@ -63,6 +70,8 @@ func main() {
 	ioTimeout := flag.Duration("io-timeout", 30*time.Second, "longest pause allowed while reading a request body or writing a response")
 	maxUploads := flag.Int("max-uploads", 8, "uploads handled at once; the rest wait")
 	configFile := flag.String("config", "", "JSON file of settings keyed by flag name; a flag given on the command line wins")
+	var chunkSize int64
+	flag.Func("chunk-size", "average chunk size for content-defined chunking of raw and zstd NARs, a power of two with K, M, G suffixes; 0 stripes every NAR", func(s string) (err error) { chunkSize, err = parseSize(s); return })
 	keys := trustedKeysFlag(flag.CommandLine)
 	var upstreams []string
 	flag.Func("upstream", "cache to pull misses from; repeatable, tried in order", func(s string) error {
@@ -103,6 +112,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "--max-uploads must be positive")
 		os.Exit(1)
 	}
+	if chunkSize != 0 && (chunkSize < 4096 || chunkSize&(chunkSize-1) != 0) {
+		fmt.Fprintln(os.Stderr, "--chunk-size must be a power of two of at least 4K")
+		os.Exit(1)
+	}
 
 	_, ioctx, err := openPool(*pool)
 	if err != nil {
@@ -115,7 +128,7 @@ func main() {
 		slog.Error("listen", "error", err)
 		os.Exit(1)
 	}
-	srv := &http.Server{Handler: newHandler(ioctx, *stripeSize, *caDerivations, *maxUploads, upstreams, keys, *ioTimeout)}
+	srv := &http.Server{Handler: newHandler(ioctx, *stripeSize, int(chunkSize), *caDerivations, *maxUploads, upstreams, keys, *ioTimeout)}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -130,7 +143,7 @@ func main() {
 		}
 	}()
 
-	slog.Info("listening", "address", *listen, "pool", *pool, "stripe_size", *stripeSize, "ca_derivations", *caDerivations, "upstreams", upstreams, "trusted_keys", len(keys))
+	slog.Info("listening", "address", *listen, "pool", *pool, "stripe_size", *stripeSize, "chunk_size", chunkSize, "ca_derivations", *caDerivations, "upstreams", upstreams, "trusted_keys", len(keys))
 	if err := srv.Serve(idleListener{ln, *ioTimeout}); !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
@@ -469,6 +482,10 @@ func now() []byte {
 
 func stampNew(op *rados.WriteOp, upstream string) {
 	op.Create(rados.CreateExclusive)
+	stamp(op, upstream)
+}
+
+func stamp(op *rados.WriteOp, upstream string) {
 	op.SetXattr(createdXattr, now())
 	stampAccess(op, 1)
 	if upstream != "" {
@@ -527,11 +544,33 @@ func stripeName(name string, i int) string {
 	return fmt.Sprintf("%s.%016x", name, i)
 }
 
-func putNAR(ioctx *rados.IOContext, name string, body io.Reader, stripeSize int, upstream string, calls *int) error {
-	*calls++
-	if _, err := ioctx.Stat(stripeName(name, 0)); err == nil {
+func chunkName(sum []byte) string {
+	return "chunk/" + hex.EncodeToString(sum)
+}
+
+func (h *handler) putNAR(name string, body io.Reader, upstream string, s *reqStats) error {
+	ioctx, stripeSize, calls := h.ioctx, h.stripeSize, &s.radosCalls
+	*calls += 2
+	_, err := ioctx.Stat(stripeName(name, 0))
+	if _, xerr := ioctx.GetXattr(name, sizeXattr, make([]byte, 20)); err == nil || xerr == nil {
+		if err == nil {
+			name = stripeName(name, 0)
+		}
 		_, err = io.Copy(io.Discard, body)
+		h.setAccess(name, s)
 		return cmp.Or[error](err, rados.ErrObjectExists)
+	}
+	if h.chunkSize > 0 {
+		br := bufio.NewReader(body)
+		switch magic, _ := br.Peek(len(narMagic)); {
+		case string(magic) == narMagic:
+			return h.putChunked(name, br, "none", upstream, calls)
+		case strings.HasPrefix(string(magic), zstdMagic):
+			dec, _ := zstd.NewReader(br, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxWindow(64<<20))
+			defer dec.Close()
+			return h.putChunked(name, dec, "zstd", upstream, calls)
+		}
+		body = br
 	}
 	var first []byte
 	buf := make([]byte, stripeSize)
@@ -570,6 +609,53 @@ func putNAR(ioctx *rados.IOContext, name string, body io.Reader, stripeSize int,
 	op.WriteFull(first)
 	*calls++
 	return op.Operate(ioctx, stripeName(name, 0), rados.OperationNoFlag)
+}
+
+// putChunked stores r as chunk objects and a manifest of 40-byte records: sha256, uncompressed length, compressed length.
+// The manifest is rewritten without its size xattr every stripe size of input so the collector can tell a live upload from leftovers.
+func (h *handler) putChunked(name string, r io.Reader, codec, upstream string, calls *int) error {
+	c := newChunker(r, h.chunkSize)
+	var manifest, out []byte
+	var size uint64
+	total, flushAt := 0, h.stripeSize
+	for {
+		chunk, err := c.next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(chunk)
+		out = h.chunkEnc.EncodeAll(chunk, out[:0])
+		*calls++
+		if err := h.ioctx.WriteFull(chunkName(sum[:]), out); err != nil {
+			return err
+		}
+		manifest = append(manifest, sum[:]...)
+		manifest = binary.LittleEndian.AppendUint32(manifest, uint32(len(chunk)))
+		manifest = binary.LittleEndian.AppendUint32(manifest, uint32(len(out)))
+		if codec == "zstd" {
+			size += uint64(len(out))
+		} else {
+			size += uint64(len(chunk))
+		}
+		if total += len(chunk); total >= flushAt {
+			*calls++
+			if err := h.ioctx.WriteFull(name, manifest); err != nil {
+				return err
+			}
+			flushAt = total + h.stripeSize
+		}
+	}
+	op := rados.CreateWriteOp()
+	defer op.Release()
+	stamp(op, upstream)
+	op.SetXattr(codecXattr, []byte(codec))
+	op.SetXattr(sizeXattr, []byte(strconv.FormatUint(size, 10)))
+	op.WriteFull(manifest)
+	*calls++
+	return op.Operate(h.ioctx, name, rados.OperationNoFlag)
 }
 
 func stampAccess(op *rados.WriteOp, count uint64) {
@@ -623,6 +709,8 @@ func (l idleListener) Accept() (net.Conn, error) {
 type handler struct {
 	ioctx      *rados.IOContext
 	stripeSize int
+	chunkSize  int
+	chunkEnc   *zstd.Encoder
 	uploads    chan struct{}
 	upstreams  []string
 	trusted    map[string]ed25519.PublicKey
@@ -696,7 +784,7 @@ func (h *handler) pullNAR(w http.ResponseWriter, r *http.Request, name string, s
 		return true
 	}
 	client := &clientWriter{w: w}
-	err := putNAR(h.ioctx, name, io.TeeReader(resp.Body, client), h.stripeSize, u, &s.radosCalls)
+	err := h.putNAR(name, io.TeeReader(resp.Body, client), u, s)
 	if err != nil && !errors.Is(err, rados.ErrObjectExists) {
 		slog.Error("store pulled object", "object", name, "error", err)
 		_, _ = io.Copy(client, resp.Body)
@@ -731,11 +819,14 @@ func (h *handler) pullPlain(name string, s *reqStats) ([]byte, error) {
 	return body, nil
 }
 
-func newHandler(ioctx *rados.IOContext, stripeSize int, caDerivations bool, maxUploads int, upstreams []string, trusted map[string]ed25519.PublicKey, ioTimeout time.Duration) http.Handler {
+func newHandler(ioctx *rados.IOContext, stripeSize, chunkSize int, caDerivations bool, maxUploads int, upstreams []string, trusted map[string]ed25519.PublicKey, ioTimeout time.Duration) http.Handler {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
 	transport.ResponseHeaderTimeout = 10 * time.Second
-	h := &handler{ioctx: ioctx, stripeSize: stripeSize, uploads: make(chan struct{}, maxUploads), upstreams: upstreams, trusted: trusted, client: &http.Client{Transport: transport}, ioTimeout: ioTimeout}
+	h := &handler{ioctx: ioctx, stripeSize: stripeSize, chunkSize: chunkSize, uploads: make(chan struct{}, maxUploads), upstreams: upstreams, trusted: trusted, client: &http.Client{Transport: transport}, ioTimeout: ioTimeout}
+	if chunkSize > 0 {
+		h.chunkEnc, _ = zstd.NewWriter(nil, zstd.WithEncoderConcurrency(maxUploads), zstd.WithWindowSize(min(4*chunkSize, 8<<20)), zstd.WithLowerEncoderMem(true), zstd.WithEncoderLevel(zstd.SpeedBetterCompression))
+	}
 	mux := http.NewServeMux()
 	if caDerivations {
 		mux.HandleFunc("GET /build-trace-v2/{drv}/{output}", h.getObject)
@@ -858,8 +949,15 @@ func (h *handler) getNAR(w http.ResponseWriter, r *http.Request, name string) {
 	head := stripeName(name, 0)
 	s.radosCalls++
 	xattrs, err := h.ioctx.ListXattrs(head)
-	if errors.Is(err, rados.ErrNotFound) && h.pullNAR(w, r, name, s) {
-		return
+	if errors.Is(err, rados.ErrNotFound) {
+		s.radosCalls++
+		if m, merr := h.ioctx.ListXattrs(name); merr == nil && m[sizeXattr] != nil {
+			h.getChunked(w, r, name, m, s)
+			return
+		}
+		if h.pullNAR(w, r, name, s) {
+			return
+		}
 	}
 	if err != nil {
 		writeStoreError(w, name, err)
@@ -893,6 +991,53 @@ func (h *handler) getNAR(w http.ResponseWriter, r *http.Request, name string) {
 	}
 }
 
+func (h *handler) getChunked(w http.ResponseWriter, r *http.Request, name string, xattrs map[string][]byte, s *reqStats) {
+	manifest, err := getObject(h.ioctx, name, &s.radosCalls)
+	if err != nil {
+		writeStoreError(w, name, err)
+		return
+	}
+	h.setAccess(name, s)
+	w.Header().Set("Content-Type", "application/x-nix-nar")
+	w.Header().Set("Content-Length", string(xattrs[sizeXattr]))
+	if r.Method == http.MethodHead {
+		return
+	}
+	var dec *zstd.Decoder
+	if string(xattrs[codecXattr]) == "none" {
+		dec, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
+		defer dec.Close()
+	}
+	buf := make([]byte, readPiece)
+	for rec := manifest; len(rec) >= 40; rec = rec[40:] {
+		var src io.Reader = io.NewSectionReader(objectAt{h.ioctx, chunkName(rec[:32]), &s.radosCalls}, 0, int64(binary.LittleEndian.Uint32(rec[36:40])))
+		if dec != nil {
+			_ = dec.Reset(bufio.NewReaderSize(src, readPiece))
+			src = dec
+		}
+		if _, err := io.CopyBuffer(struct{ io.Writer }{w}, src, buf); err != nil {
+			slog.Error("read chunk", "object", name, "chunk", chunkName(rec[:32]), "error", err)
+			return
+		}
+	}
+}
+
+// objectAt reads pieces of one object by offset.
+type objectAt struct {
+	ioctx *rados.IOContext
+	name  string
+	calls *int
+}
+
+func (o objectAt) ReadAt(p []byte, off int64) (int, error) {
+	*o.calls++
+	n, err := o.ioctx.Read(o.name, p, uint64(off))
+	if err == nil && n < len(p) {
+		err = io.ErrUnexpectedEOF
+	}
+	return n, err
+}
+
 func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 	name, ok := objectName(r)
 	if !ok {
@@ -904,7 +1049,7 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 	s := stats(w)
 	var err error
 	if strings.HasPrefix(name, "nar/") {
-		err = putNAR(h.ioctx, name, r.Body, h.stripeSize, "", &s.radosCalls)
+		err = h.putNAR(name, r.Body, "", s)
 	} else {
 		data, rerr := io.ReadAll(http.MaxBytesReader(w, r.Body, maxNarinfoSize))
 		var tooBig *http.MaxBytesError
@@ -939,10 +1084,9 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case errors.Is(err, rados.ErrObjectExists):
-		if strings.HasPrefix(name, "nar/") {
-			name = stripeName(name, 0)
+		if !strings.HasPrefix(name, "nar/") {
+			h.setAccess(name, s)
 		}
-		h.setAccess(name, s)
 	case errors.As(err, new(*http.MaxBytesError)):
 		http.Error(w, "object too large", http.StatusRequestEntityTooLarge)
 	case err != nil:
