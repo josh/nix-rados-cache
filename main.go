@@ -1091,18 +1091,18 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 		var sigs []string
 		if strings.HasSuffix(name, ".narinfo") {
 			sigs = sigLines(data)
-		}
-		if slices.ContainsFunc(sigs, func(s string) bool { return !sigLinePattern.MatchString(s) }) {
-			http.Error(w, "malformed Sig line", http.StatusBadRequest)
-			return
-		}
-		if strings.HasSuffix(name, ".narinfo") && (len(data) == 0 || data[len(data)-1] != '\n') {
-			http.Error(w, "narinfo must end with a newline", http.StatusBadRequest)
-			return
-		}
-		if strings.HasSuffix(name, ".narinfo") && !trustedSig(h.trusted, name, data) {
-			http.Error(w, "narinfo lacks a signature by a trusted key", http.StatusForbidden)
-			return
+			if slices.ContainsFunc(sigs, func(s string) bool { return !sigLinePattern.MatchString(s) }) {
+				http.Error(w, "malformed Sig line", http.StatusBadRequest)
+				return
+			}
+			if len(data) == 0 || data[len(data)-1] != '\n' {
+				http.Error(w, "narinfo must end with a newline", http.StatusBadRequest)
+				return
+			}
+			if !trustedSig(h.trusted, name, data) {
+				http.Error(w, "narinfo lacks a signature by a trusted key", http.StatusForbidden)
+				return
+			}
 		}
 		err = putObject(h.ioctx, name, data, "", &s.radosCalls)
 		if errors.Is(err, rados.ErrObjectExists) && len(sigs) > 0 {

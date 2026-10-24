@@ -236,9 +236,7 @@ func cmdWait4Log(ts *testscript.TestScript, neg bool, args []string) {
 		ts.Fatalf("usage: wait4log <regexp> <file>")
 	}
 	pattern, err := regexp.Compile(args[0])
-	if err != nil {
-		ts.Fatalf("invalid pattern: %v", err)
-	}
+	ts.Check(err)
 	path := ts.MkAbs(args[1])
 	for range 150 {
 		if data, err := os.ReadFile(path); err == nil && pattern.Match(data) {
@@ -282,24 +280,19 @@ func cmdBinFile(ts *testscript.TestScript, neg bool, args []string) {
 	if len(args) != 2 && len(args) != 3 {
 		ts.Fatalf("usage: bin-file <path> <size-bytes> [seed]")
 	}
-	var src io.Reader = rand.Reader
+	src := rand.Reader
 	if len(args) == 3 {
 		var seed [32]byte
 		copy(seed[:], args[2])
 		src = mathrand.NewChaCha8(seed)
 	}
 	size, err := strconv.Atoi(args[1])
-	if err != nil {
-		ts.Fatalf("invalid size: %s", args[1])
-	}
+	ts.Check(err)
 	file, err := os.Create(ts.MkAbs(args[0]))
-	if err != nil {
-		ts.Fatalf("failed to create file: %v", err)
-	}
+	ts.Check(err)
 	defer func() { _ = file.Close() }()
-	if _, err := io.Copy(file, io.LimitReader(src, int64(size))); err != nil {
-		ts.Fatalf("failed to write file: %v", err)
-	}
+	_, err = io.Copy(file, io.LimitReader(src, int64(size)))
+	ts.Check(err)
 }
 
 // nar-pack writes a NAR of a directory to a file so the binary never lands in the script's stdout.
@@ -338,13 +331,9 @@ func cmdHTTPHold(ts *testscript.TestScript, neg bool, args []string) {
 		ts.Fatalf("usage: http-hold <url> <content-length>")
 	}
 	u, err := url.Parse(args[0])
-	if err != nil {
-		ts.Fatalf("invalid url: %v", err)
-	}
+	ts.Check(err)
 	conn, err := net.Dial("tcp", u.Host)
-	if err != nil {
-		ts.Fatalf("dial: %v", err)
-	}
+	ts.Check(err)
 	defer func() { _ = conn.Close() }()
 	_, _ = fmt.Fprintf(conn, "PUT %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %s\r\n\r\n", u.RequestURI(), u.Host, args[1])
 	_, _ = io.Copy(io.Discard, conn)
@@ -392,13 +381,9 @@ func cmdBinCmp(ts *testscript.TestScript, neg bool, args []string) {
 		ts.Fatalf("usage: bin-cmp file1 file2")
 	}
 	data1, err := os.ReadFile(ts.MkAbs(args[0]))
-	if err != nil {
-		ts.Fatalf("failed to read %s: %v", args[0], err)
-	}
+	ts.Check(err)
 	data2, err := os.ReadFile(ts.MkAbs(args[1]))
-	if err != nil {
-		ts.Fatalf("failed to read %s: %v", args[1], err)
-	}
+	ts.Check(err)
 	if !bytes.Equal(data1, data2) {
 		ts.Fatalf("%s and %s differ", args[0], args[1])
 	}
