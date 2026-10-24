@@ -194,12 +194,18 @@ func gc(args []string) {
 
 	type path struct {
 		name, url string
-		size      int64
 		mtime     time.Time
 	}
 	var paths []path
-	refs := map[string]int{}
+	refs, narSize := map[string]int{}, map[string]int64{}
+	head, xattr := stripeName("", 0), make([]byte, 20)
 	walk(func(name string) {
+		if nar, ok := strings.CutSuffix(name, head); ok && stripePattern.MatchString(name) {
+			if n, err := ioctx.GetXattr(name, sizeXattr, xattr); err == nil {
+				narSize[nar], _ = strconv.ParseInt(string(xattr[:n]), 10, 64)
+			}
+			return
+		}
 		if !plainPattern.MatchString(name) {
 			return
 		}
@@ -227,15 +233,13 @@ func gc(args []string) {
 			if v, ok := strings.CutPrefix(line, "URL: "); ok {
 				p.url = strings.TrimSpace(v)
 			}
-			if v, ok := strings.CutPrefix(line, "FileSize: "); ok {
-				p.size, _ = strconv.ParseInt(strings.TrimSpace(v), 10, 64)
-			}
 		}
-		if refs[p.url]++; refs[p.url] == 1 {
-			stored += p.size
-		}
+		refs[p.url]++
 		paths = append(paths, p)
 	})
+	for url := range refs {
+		stored += narSize[url]
+	}
 	if minFree > 0 {
 		quota, err := poolQuota(conn, *pool)
 		if err != nil {
@@ -247,7 +251,7 @@ func gc(args []string) {
 		if free < minFree {
 			slices.SortFunc(paths, func(a, b path) int {
 				if *priority == "largest" {
-					return cmp.Compare(b.size, a.size)
+					return cmp.Compare(narSize[b.url], narSize[a.url])
 				}
 				return a.mtime.Compare(b.mtime)
 			})
@@ -257,13 +261,12 @@ func gc(args []string) {
 				}
 				if remove(p.name) {
 					if refs[p.url]--; refs[p.url] == 0 {
-						freed += p.size
+						freed += narSize[p.url]
 					}
 				}
 			}
 		}
 	}
-	head := stripeName("", 0)
 	walk(func(name string) {
 		switch {
 		case stripePattern.MatchString(name) && strings.HasSuffix(name, head) && refs[strings.TrimSuffix(name, head)] == 0:

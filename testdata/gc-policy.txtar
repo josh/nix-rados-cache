@@ -73,6 +73,19 @@ exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
 stdout -count=1 '^.'
 stdout '^foreign/object$'
 
+exec curl --silent --fail --upload-file bigfixture/blob http://127.0.0.1:$PORT/nar/fixed.nar
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put nofilesize.narinfo nofilesize.narinfo
+backdate nofilesize.narinfo 2000-01-01T00:00:00Z
+backdate nar/fixed.nar.0000000000000000 2000-01-01T00:00:00Z
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --min-free 1T --dry-run
+stderr 'msg=gc deleted=2 freed=17000000$'
+
+-- nofilesize.narinfo --
+StorePath: /nix/store/00000000000000000000000000000000-nofilesize
+URL: nar/fixed.nar
+Compression: none
+NarHash: sha256:0000000000000000000000000000000000000000000000000000
+NarSize: 17000000
 -- fixture/hello.txt --
 hello from nix-rados-cache
 -- otherfixture/other.txt --
