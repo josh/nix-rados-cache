@@ -1,0 +1,75 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --chunk-size 64K --stripe-size 262144 --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+mkdir fixture
+bin-file fixture/blob 1000000 gc
+nar-pack fixture a.nar
+cp extra/zzz fixture/zzz
+nar-pack fixture b.nar
+exec curl --silent --write-out '%{http_code}' --upload-file a.nar http://127.0.0.1:$PORT/nar/a.nar
+stdout '^201$'
+exec curl --silent --write-out '%{http_code}' --upload-file b.nar http://127.0.0.1:$PORT/nar/b.nar
+stdout '^201$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.narinfo a.narinfo
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.narinfo b.narinfo
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=15 '^chunk/'
+backdate chunk/ 2000-01-01T00:00:00Z
+backdate nar/a.nar 2000-01-01T00:00:00Z
+backdate nar/b.nar 2000-01-01T00:00:00Z
+backdate aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.narinfo 2000-01-01T00:00:00Z
+backdate bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.narinfo 2000-01-01T00:00:00Z
+
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL
+stderr 'msg=gc deleted=0 freed=0'
+
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL rm aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.narinfo
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL
+stderr 'msg=deleted object=nar/a.nar$'
+stderr -count=1 'msg=deleted object=chunk/'
+stderr 'msg=gc deleted=2 freed=0'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=14 '^chunk/'
+! stdout '^nar/a\.nar$'
+exec curl --silent --fail --output b-downloaded.nar http://127.0.0.1:$PORT/nar/b.nar
+bin-cmp b.nar b-downloaded.nar
+
+mkdir partial
+bin-file partial/blob 1000000 gc-partial
+nar-pack partial c.nar
+! exec curl --silent --max-time 2 --header 'Content-Length: 2000000' --upload-file c.nar http://127.0.0.1:$PORT/nar/c.nar
+wait4log 'msg=request method=PUT path=/nar/c.nar status=500' server.log
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=30 '^chunk/'
+backdate chunk/ 2000-01-01T00:00:00Z
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL
+stderr 'msg=gc deleted=5 freed=0'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL stat nar/c.nar
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=25 '^chunk/'
+
+backdate nar/c.nar 2000-01-01T00:00:00Z
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL
+stderr 'msg=deleted object=nar/c.nar$'
+stderr 'msg=gc deleted=12 freed=0'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=14 '^chunk/'
+stdout -count=1 '^nar/'
+
+-- extra/zzz --
+appended after blob
+-- a.narinfo --
+StorePath: /nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-a
+URL: nar/a.nar
+Compression: none
+NarHash: sha256:0000000000000000000000000000000000000000000000000000
+NarSize: 1
+-- b.narinfo --
+StorePath: /nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-b
+URL: nar/b.nar
+Compression: none
+NarHash: sha256:0000000000000000000000000000000000000000000000000000
+NarSize: 1

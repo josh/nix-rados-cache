@@ -53,6 +53,8 @@ var (
 	sigLinePattern    = regexp.MustCompile(`^Sig: [^:\s]+:[A-Za-z0-9+/=]+$`)
 	plainPattern      = regexp.MustCompile(`^(log/|build-trace-v2/[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$`)
 	stripePattern     = regexp.MustCompile(`^nar/[A-Za-z0-9._-]+\.[0-9a-f]{16}$`)
+	manifestPattern   = regexp.MustCompile(`^nar/[A-Za-z0-9._-]+$`)
+	chunkPattern      = regexp.MustCompile(`^chunk/[0-9a-f]{64}$`)
 	zstdEncoder, _    = zstd.NewWriter(nil)
 )
 
@@ -219,6 +221,13 @@ func gc(args []string) {
 			}
 			return
 		}
+		if manifestPattern.MatchString(name) && !stripePattern.MatchString(name) {
+			manifest, _ := getObject(ioctx, name, new(int))
+			for rec := manifest; len(rec) >= 40; rec = rec[40:] {
+				narSize[name] += int64(binary.LittleEndian.Uint32(rec[36:40]))
+			}
+			return
+		}
 		if !plainPattern.MatchString(name) {
 			return
 		}
@@ -280,10 +289,22 @@ func gc(args []string) {
 			}
 		}
 	}
+	// A manifest without its size xattr belongs to an upload in flight or one that died; its chunks stay until it is past the grace period.
+	live := map[uint64]bool{}
 	walk(func(name string) {
 		switch {
-		case stripePattern.MatchString(name) && strings.HasSuffix(name, head) && refs[strings.TrimSuffix(name, head)] == 0:
-			remove(name)
+		case stripePattern.MatchString(name):
+			if strings.HasSuffix(name, head) && refs[strings.TrimSuffix(name, head)] == 0 {
+				remove(name)
+			}
+		case manifestPattern.MatchString(name):
+			if _, err := ioctx.GetXattr(name, sizeXattr, xattr); (err != nil || refs[name] == 0) && remove(name) {
+				return
+			}
+			manifest, _ := getObject(ioctx, name, new(int))
+			for rec := manifest; len(rec) >= 40; rec = rec[40:] {
+				live[binary.BigEndian.Uint64(rec)] = true
+			}
 		case plainPattern.MatchString(name) && strings.HasSuffix(name, ".ls"):
 			if _, err := ioctx.Stat(strings.TrimSuffix(name, ".ls") + ".narinfo"); errors.Is(err, rados.ErrNotFound) {
 				remove(name)
@@ -293,6 +314,12 @@ func gc(args []string) {
 	// An upload writes its tail stripes over minutes or hours before stripe 0, so a headless NAR is judged by its newest stripe.
 	orphans, active := map[string][]string{}, map[string]bool{}
 	walk(func(name string) {
+		if chunkPattern.MatchString(name) {
+			if prefix, _ := strconv.ParseUint(name[6:22], 16, 64); !live[prefix] {
+				remove(name)
+			}
+			return
+		}
 		if !stripePattern.MatchString(name) || strings.HasSuffix(name, head) {
 			return
 		}
