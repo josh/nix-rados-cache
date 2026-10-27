@@ -1,0 +1,21 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --chunk-size 64K --stripe-size 262144 --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+mkdir fixture
+bin-file fixture/blob 1000000 concurrent
+nar-pack fixture a.nar
+exec dd if=a.nar of=half bs=1000 count=500 status=none
+exec dd if=a.nar of=piece bs=1000 count=300 skip=500 status=none
+
+http-send http://127.0.0.1:$PORT/nar/a.nar 1000280 half
+exec curl --silent --write-out '%{http_code}' --upload-file a.nar http://127.0.0.1:$PORT/nar/a.nar
+stdout '^201$'
+http-send http://127.0.0.1:$PORT/nar/a.nar 1000280 piece
+http-send http://127.0.0.1:$PORT/nar/a.nar 1000280
+wait4log 'msg=request method=PUT path=/nar/a.nar status=500' server.log
+
+exec curl --silent --fail --output a-downloaded.nar http://127.0.0.1:$PORT/nar/a.nar
+bin-cmp a.nar a-downloaded.nar

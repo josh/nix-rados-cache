@@ -639,7 +639,7 @@ func (h *handler) putNAR(name string, body io.Reader, upstream string, s *reqSta
 }
 
 // putChunked stores r as chunk objects and a manifest of 40-byte records: sha256, uncompressed length, compressed length.
-// The manifest is rewritten without its size xattr every stripe size of input so the collector can tell a live upload from leftovers.
+// The manifest so far is flushed without its size xattr every stripe size of input so the collector can tell a live upload from leftovers.
 func (h *handler) putChunked(name string, r io.Reader, codec, upstream string, calls *int) error {
 	c := newChunker(r, h.chunkSize)
 	var manifest, out []byte
@@ -668,10 +668,7 @@ func (h *handler) putChunked(name string, r io.Reader, codec, upstream string, c
 			size += uint64(len(chunk))
 		}
 		if total += len(chunk); total >= flushAt {
-			*calls++
-			if err := h.ioctx.WriteFull(name, manifest); err != nil {
-				return err
-			}
+			h.flushManifest(name, manifest, calls)
 			flushAt = total + h.stripeSize
 		}
 	}
@@ -683,6 +680,30 @@ func (h *handler) putChunked(name string, r io.Reader, codec, upstream string, c
 	op.WriteFull(manifest)
 	*calls++
 	return op.Operate(h.ioctx, name, rados.OperationNoFlag)
+}
+
+// flushManifest writes an upload's manifest so far. Another upload of the same NAR may have completed since the duplicate
+// check, so the write is skipped once the size xattr exists and is conditional on the version seen without it; a flush
+// lost to a concurrent writer is harmless, since its manifest lists the same chunks, so errors are ignored.
+func (h *handler) flushManifest(name string, manifest []byte, calls *int) {
+	op := rados.CreateWriteOp()
+	defer op.Release()
+	*calls++
+	if _, err := h.ioctx.Stat(name); errors.Is(err, rados.ErrNotFound) {
+		op.Create(rados.CreateExclusive)
+	} else if err != nil {
+		return
+	} else {
+		version, _ := h.ioctx.GetLastVersion()
+		*calls++
+		if _, err := h.ioctx.GetXattr(name, sizeXattr, make([]byte, 20)); err == nil {
+			return
+		}
+		op.AssertVersion(version)
+	}
+	op.WriteFull(manifest)
+	*calls++
+	_ = op.Operate(h.ioctx, name, rados.OperationNoFlag)
 }
 
 func stampAccess(op *rados.WriteOp, count uint64) {
