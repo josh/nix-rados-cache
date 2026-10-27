@@ -655,15 +655,15 @@ func (h *handler) putChunked(name string, r io.Reader, codec, upstream string, c
 		}
 		sum := sha256.Sum256(chunk)
 		out = h.chunkEnc.EncodeAll(chunk, out[:0])
-		*calls++
-		if err := h.ioctx.WriteFull(chunkName(sum[:]), out); err != nil {
+		stored, err := h.putChunk(chunkName(sum[:]), out, calls)
+		if err != nil {
 			return err
 		}
 		manifest = append(manifest, sum[:]...)
 		manifest = binary.LittleEndian.AppendUint32(manifest, uint32(len(chunk)))
-		manifest = binary.LittleEndian.AppendUint32(manifest, uint32(len(out)))
+		manifest = binary.LittleEndian.AppendUint32(manifest, uint32(stored))
 		if codec == "zstd" {
-			size += uint64(len(out))
+			size += uint64(stored)
 		} else {
 			size += uint64(len(chunk))
 		}
@@ -704,6 +704,27 @@ func (h *handler) flushManifest(name string, manifest []byte, calls *int) {
 	op.WriteFull(manifest)
 	*calls++
 	_ = op.Operate(h.ioctx, name, rados.OperationNoFlag)
+}
+
+// putChunk writes a chunk once and returns its stored length. An existing chunk is never rewritten, since its frame may
+// come from another encoder; it is touched so its mtime shows it is in use, and its length is read back from the pool.
+func (h *handler) putChunk(name string, data []byte, calls *int) (int, error) {
+	op := rados.CreateWriteOp()
+	defer op.Release()
+	op.Create(rados.CreateExclusive)
+	op.WriteFull(data)
+	*calls++
+	err := op.Operate(h.ioctx, name, rados.OperationNoFlag)
+	if !errors.Is(err, rados.ErrObjectExists) {
+		return len(data), err
+	}
+	*calls += 2
+	touch := rados.CreateWriteOp()
+	defer touch.Release()
+	touch.AssertExists()
+	touch.SetXattr(accessedXattr, now())
+	stat, err := h.ioctx.Stat(name)
+	return int(stat.Size), cmp.Or(err, touch.Operate(h.ioctx, name, rados.OperationNoFlag))
 }
 
 func stampAccess(op *rados.WriteOp, count uint64) {

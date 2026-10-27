@@ -38,6 +38,7 @@ stdout '^4$'
 
 exec curl --silent --write-out '%{http_code}' --upload-file payload.nar.zst http://127.0.0.1:$PORT/nar/z.nar.zst
 stdout '^201$'
+wait4log 'msg=request method=PUT path=/nar/z.nar.zst status=201 .* rados_calls=65' server.log
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
 stdout '^nar/z\.nar\.zst$'
 stdout -count=18 '^chunk/'
@@ -69,11 +70,23 @@ nar-pack tiny tiny.nar
 exec sha256sum tiny.nar
 capture-output TINY '^([0-9a-f]{64}) '
 exec zstd -q tiny.nar -o tiny.nar.zst
+exec zstd -q --no-check tiny.nar -o pre
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put chunk/$TINY pre
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL stat chunk/$TINY
+capture-output PRE 'size ([0-9]+)'
+backdate chunk/$TINY 2000-01-01T00:00:00Z
 exec curl --silent --write-out '%{http_code}' --upload-file tiny.nar http://127.0.0.1:$PORT/nar/tiny.nar
 stdout '^201$'
 exec curl --silent --write-out '%{http_code}' --upload-file tiny.nar.zst http://127.0.0.1:$PORT/nar/tiny.nar.zst
 stdout '^201$'
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL stat chunk/$TINY
+! stdout 'mtime 2000-'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL get chunk/$TINY after
+bin-cmp pre after
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/tiny.nar.zst striper.size
+stdout '^'$PRE'$'
+exec curl --silent --fail --output tiny-downloaded.nar http://127.0.0.1:$PORT/nar/tiny.nar
+bin-cmp tiny.nar tiny-downloaded.nar
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put chunk/$TINY empty
 ! exec curl --silent --fail --output /dev/null http://127.0.0.1:$PORT/nar/tiny.nar.zst
 wait4log 'msg="read chunk" object=nar/tiny.nar.zst chunk=chunk/'$TINY' error="unexpected EOF"' server.log
