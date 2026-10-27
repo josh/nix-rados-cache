@@ -59,6 +59,22 @@ exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
 stdout -count=14 '^chunk/'
 stdout -count=1 '^nar/'
 
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put chunk/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff extra/zzz
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put chunk/bogus extra/zzz
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL
+stderr 'msg=gc deleted=0 freed=0'
+backdate chunk/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff 2000-01-01T00:00:00Z
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL
+stderr 'msg=gc deleted=1 freed=0'
+
+backdate nar/b.nar 2000-01-01T00:00:00Z
+exec ceph --conf $CEPH_CONF osd pool set-quota $NIX_RADOS_CACHE_POOL max_bytes 20000000
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --min-free 1T
+stderr 'msg=gc deleted=16 freed=[1-9][0-9]*$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=1 '^.'
+stdout '^chunk/bogus$'
+
 -- extra/zzz --
 appended after blob
 -- a.narinfo --
