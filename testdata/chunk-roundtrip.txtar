@@ -63,6 +63,15 @@ stdout '^nar/short\.nar$'
 ! exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/short.nar striper.size
 exec curl --silent --write-out '%{http_code}' --output /dev/null http://127.0.0.1:$PORT/nar/short.nar
 stdout '^404$'
+exec curl --silent --write-out '%{http_code}' --upload-file payload.nar http://127.0.0.1:$PORT/nar/short.nar
+stdout '^201$'
+exec curl --silent --fail --output recovered.nar http://127.0.0.1:$PORT/nar/short.nar
+bin-cmp payload.nar recovered.nar
+
+exec dd if=payload.nar.zst of=cut.nar.zst bs=1000 count=50 status=none
+exec curl --silent --upload-file cut.nar.zst --output /dev/null http://127.0.0.1:$PORT/nar/cut.nar.zst
+wait4log 'msg=request method=PUT path=/nar/cut.nar.zst status=500' server.log
+! exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL stat nar/cut.nar.zst
 
 mkdir tiny
 cp extra/tiny.txt tiny/tiny.txt
@@ -87,9 +96,16 @@ exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/tiny.nar.
 stdout '^'$PRE'$'
 exec curl --silent --fail --output tiny-downloaded.nar http://127.0.0.1:$PORT/nar/tiny.nar
 bin-cmp tiny.nar tiny-downloaded.nar
-exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put chunk/$TINY empty
+exec dd if=pre of=partial bs=20 count=1 status=none
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put chunk/$TINY partial
 ! exec curl --silent --fail --output /dev/null http://127.0.0.1:$PORT/nar/tiny.nar.zst
 wait4log 'msg="read chunk" object=nar/tiny.nar.zst chunk=chunk/'$TINY' error="unexpected EOF"' server.log
+bin-file garbage $PRE
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put chunk/$TINY garbage
+exec curl --silent --fail --output garbled.nar.zst http://127.0.0.1:$PORT/nar/tiny.nar.zst
+! exec zstd -q -d garbled.nar.zst -o garbled.nar
+! exec curl --silent --fail --output /dev/null http://127.0.0.1:$PORT/nar/tiny.nar
+wait4log 'msg="read chunk" object=nar/tiny.nar chunk=chunk/'$TINY server.log
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL rm chunk/$TINY
 ! exec curl --silent --fail --output /dev/null http://127.0.0.1:$PORT/nar/tiny.nar
 wait4log 'msg="read chunk" object=nar/tiny.nar chunk=chunk/'$TINY' error="rados: ret=-2' server.log
@@ -104,4 +120,3 @@ wait4log 'msg="rados error" object=nar/tiny.nar.zst error="manifest of 20 bytes'
 
 -- extra/tiny.txt --
 one chunk
--- empty --
