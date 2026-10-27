@@ -1,0 +1,39 @@
+tail-logs
+create-pool
+env UP_POOL=$NIX_RADOS_CACHE_POOL
+create-pool
+
+exec nix-rados-cache --pool $UP_POOL --listen 127.0.0.1:$PORT2 --log-file upstream.log &upstream&
+wait4http http://127.0.0.1:$PORT2/nix-cache-info
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --upstream http://127.0.0.1:$PORT2 --chunk-size 64K --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+mkdir zstd none
+bin-file zstd/blob 1000000 pull-zstd
+bin-file none/blob 1000000 pull-none
+exec nix store add-path --store $WORK/store1 --name zstd zstd
+capture-output ZSTD
+exec nix store add-path --store $WORK/store1 --name none none
+capture-output NONE
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT2?compression=zstd $ZSTD
+exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT2?compression=none $NONE
+
+exec nix path-info --store http://127.0.0.1:$PORT --json --json-format 2 $ZSTD
+capture-output NAR "url":"(nar/[^"]+)"
+exec curl --silent --fail --output pulled.nar.zst http://127.0.0.1:$PORT/$NAR
+exec curl --silent --fail --output upstream.nar.zst http://127.0.0.1:$PORT2/$NAR
+bin-cmp pulled.nar.zst upstream.nar.zst
+wait4log 'msg=pulled object='$NAR' upstream=http://127.0.0.1:[0-9]+' server.log
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr $NAR codec
+stdout '^zstd$'
+
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store2 $ZSTD $NONE
+wait4log 'msg=request method=GET path=/'$NAR' status=200 .* upstream=""' server.log
+cmp zstd/blob $WORK/store2$ZSTD/blob
+cmp none/blob $WORK/store2$NONE/blob
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=2 '^nar/'
+! stdout '\.0000000000000000$'
+stdout '^chunk/'
+exec nix copy --no-check-sigs --from http://127.0.0.1:$PORT --to $WORK/store3 $NONE
+cmp none/blob $WORK/store3$NONE/blob
