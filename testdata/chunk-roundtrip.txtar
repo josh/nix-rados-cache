@@ -94,6 +94,14 @@ exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL rm chunk/$TINY
 ! exec curl --silent --fail --output /dev/null http://127.0.0.1:$PORT/nar/tiny.nar
 wait4log 'msg="read chunk" object=nar/tiny.nar chunk=chunk/'$TINY' error="rados: ret=-2' server.log
 
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL rmxattr nar/tiny.nar.zst codec
+exec curl --silent --output /dev/null http://127.0.0.1:$PORT/nar/tiny.nar.zst
+wait4log 'msg="rados error" object=nar/tiny.nar.zst error="manifest of 40 bytes with codec \\"\\"' server.log
+exec dd if=tiny.nar of=cut bs=20 count=1 status=none
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put nar/tiny.nar.zst cut
+exec curl --silent --output /dev/null http://127.0.0.1:$PORT/nar/tiny.nar.zst
+wait4log 'msg="rados error" object=nar/tiny.nar.zst error="manifest of 20 bytes' server.log
+
 -- extra/tiny.txt --
 one chunk
 -- empty --
