@@ -60,7 +60,7 @@ Stripes 1 and up are written first, each as one full-object write. Stripe 0 is w
 
 ## Chunked NAR objects
 
-The uncompressed NAR is cut into content-defined chunks. Each chunk is stored as the object `chunk/<sha256>`, where `<sha256>` is the SHA-256 of the chunk's uncompressed bytes, holding one zstd frame that decompresses to the chunk. Chunk objects have no xattrs and are shared by every NAR that contains the same bytes; writing one that already exists rewrites it with identical content.
+The uncompressed NAR is cut into content-defined chunks. Each chunk is stored as the object `chunk/<sha256>`, where `<sha256>` is the SHA-256 of the chunk's uncompressed bytes, holding one zstd frame that decompresses to the chunk. Chunk objects are shared by every NAR that contains the same bytes and carry no xattrs a reader needs. A chunk is written once and never rewritten; a writer that finds it present only refreshes its mtime and records the length it finds.
 
 The manifest `nar/<name>` lists the chunks in order as fixed 40-byte records: the 32-byte SHA-256, the uncompressed length and the compressed length, both unsigned 32-bit little-endian. It carries the xattrs:
 
