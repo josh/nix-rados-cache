@@ -90,7 +90,7 @@ A collector is a separate process on the pool that runs with or without servers 
 
 ## Integrity
 
-No checksums are stored or verified beyond those inside the narinfo. Nix clients verify NARs against the hashes and signatures there.
+A chunk's name is the SHA-256 of its uncompressed bytes, and a reader serving a NAR with codec `none` verifies each chunk against it as it decompresses and stops at a mismatch; a NAR with codec `zstd` is served unverified. No other checksums are stored or verified beyond those inside the narinfo, against which Nix clients verify every NAR.
 
 ## Inspecting with the rados CLI
 

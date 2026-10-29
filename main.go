@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/ed25519"
@@ -1090,15 +1091,22 @@ func (h *handler) getChunked(w http.ResponseWriter, r *http.Request, name string
 		dec, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
 		defer dec.Close()
 	}
-	buf := make([]byte, readPiece)
+	buf, digest := make([]byte, readPiece), sha256.New()
 	for rec := manifest; len(rec) >= 40; rec = rec[40:] {
 		var src io.Reader = io.NewSectionReader(objectAt{h.ioctx, chunkName(rec[:32]), &s.radosCalls}, 0, int64(binary.LittleEndian.Uint32(rec[36:40])))
+		var dst io.Writer = struct{ io.Writer }{w}
 		if dec != nil {
 			_ = dec.Reset(bufio.NewReaderSize(src, readPiece))
 			src = dec
+			digest.Reset()
+			dst = io.MultiWriter(dst, digest)
 		}
-		if _, err := io.CopyBuffer(struct{ io.Writer }{w}, src, buf); err != nil {
+		if _, err := io.CopyBuffer(dst, src, buf); err != nil {
 			slog.Error("read chunk", "object", name, "chunk", chunkName(rec[:32]), "error", err)
+			return
+		}
+		if dec != nil && !bytes.Equal(digest.Sum(nil), rec[:32]) {
+			slog.Error("chunk hash mismatch", "object", name, "chunk", chunkName(rec[:32]))
 			return
 		}
 	}

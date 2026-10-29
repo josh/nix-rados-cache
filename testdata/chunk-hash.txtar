@@ -1,0 +1,40 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --chunk-size 64K --stripe-size 262144 --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+mkdir tiny other
+cp extra/tiny.txt tiny/tiny.txt
+cp extra/other.txt other/tiny.txt
+nar-pack tiny tiny.nar
+nar-pack other other.nar
+exec sha256sum tiny.nar
+capture-output TINY '^([0-9a-f]{64}) '
+exec zstd -q tiny.nar -o tiny.nar.zst
+exec zstd -q other.nar -o other.zst
+
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put chunk/$TINY other.zst
+exec curl --silent --write-out '%{http_code}' --upload-file tiny.nar http://127.0.0.1:$PORT/nar/tiny.nar
+stdout '^201$'
+exec curl --silent --write-out '%{http_code}' --upload-file tiny.nar.zst http://127.0.0.1:$PORT/nar/tiny.nar.zst
+stdout '^201$'
+
+exec curl --silent --fail --output wrong.nar http://127.0.0.1:$PORT/nar/tiny.nar
+bin-cmp other.nar wrong.nar
+wait4log 'msg="chunk hash mismatch" object=nar/tiny.nar chunk=chunk/'$TINY server.log
+
+exec curl --silent --fail --output served.nar.zst http://127.0.0.1:$PORT/nar/tiny.nar.zst
+exec zstd -q -d served.nar.zst -o served.nar
+bin-cmp other.nar served.nar
+
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL rm chunk/$TINY
+exec curl --silent --write-out '%{http_code}' --upload-file tiny.nar http://127.0.0.1:$PORT/nar/fixed.nar
+stdout '^201$'
+exec curl --silent --fail --output fixed.nar http://127.0.0.1:$PORT/nar/tiny.nar
+bin-cmp tiny.nar fixed.nar
+
+-- extra/tiny.txt --
+one chunk
+-- extra/other.txt --
+two chunk
