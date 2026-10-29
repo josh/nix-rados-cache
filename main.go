@@ -163,6 +163,7 @@ func gc(args []string) {
 	fs.Func("max-free", "stop evicting once free space reaches this; defaults to --min-free", func(s string) (err error) { maxFree, err = parseSize(s); return })
 	priority := fs.String("priority", "oldest", "evict oldest or largest store paths first")
 	dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
+	verify := fs.Bool("verify", false, "read every chunk and delete the store paths of NARs with a chunk whose content does not hash to its name")
 	keys := trustedKeysFlag(fs)
 	_ = fs.Parse(args)
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -212,9 +213,23 @@ func gc(args []string) {
 		mtime     time.Time
 	}
 	var paths []path
-	refs, narSize := map[string]int{}, map[string]int64{}
+	refs, narSize, corrupt := map[string]int{}, map[string]int64{}, map[string]bool{}
 	head, xattr := stripeName("", 0), make([]byte, 20)
+	dec, _ := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
 	walk(func(name string) {
+		if chunkPattern.MatchString(name) {
+			if *verify {
+				data, err := getObject(ioctx, name, new(int))
+				if err == nil {
+					data, err = dec.DecodeAll(data, nil)
+				}
+				if sum := sha256.Sum256(data); err != nil || chunkName(sum[:]) != name {
+					slog.Warn("corrupt chunk", "object", name, "error", err)
+					corrupt[name] = true
+				}
+			}
+			return
+		}
 		if nar, ok := strings.CutSuffix(name, head); ok && stripePattern.MatchString(name) {
 			if n, err := ioctx.GetXattr(name, sizeXattr, xattr); err == nil {
 				narSize[nar], _ = strconv.ParseInt(string(xattr[:n]), 10, 64)
@@ -298,10 +313,19 @@ func gc(args []string) {
 				remove(name)
 			}
 		case manifestPattern.MatchString(name):
+			manifest, _ := getObject(ioctx, name, new(int))
+			bad := false
+			for rec := manifest; len(rec) >= 40; rec = rec[40:] {
+				bad = bad || corrupt[chunkName(rec[:32])]
+			}
+			for _, p := range paths {
+				if bad && p.url == name && remove(p.name) {
+					refs[name]--
+				}
+			}
 			if _, err := ioctx.GetXattr(name, sizeXattr, xattr); (err != nil || refs[name] == 0) && remove(name) {
 				return
 			}
-			manifest, _ := getObject(ioctx, name, new(int))
 			for rec := manifest; len(rec) >= 40; rec = rec[40:] {
 				live[binary.BigEndian.Uint64(rec)] = true
 			}

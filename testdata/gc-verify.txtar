@@ -1,0 +1,104 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --chunk-size 64K --stripe-size 262144 --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+mkdir tiny other good
+cp extra/tiny.txt tiny/tiny.txt
+cp extra/other.txt other/tiny.txt
+cp extra/good.txt good/good.txt
+nar-pack tiny tiny.nar
+nar-pack other other.nar
+nar-pack good good.nar
+exec sha256sum tiny.nar
+capture-output TINY '^([0-9a-f]{64}) '
+exec sha256sum other.nar
+capture-output OTHER '^([0-9a-f]{64}) '
+exec zstd -q other.nar -o other.zst
+bin-file garbage 100
+
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put chunk/$TINY other.zst
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put chunk/$OTHER garbage
+exec curl --silent --write-out '%{http_code}' --upload-file tiny.nar http://127.0.0.1:$PORT/nar/t1.nar
+stdout '^201$'
+exec curl --silent --write-out '%{http_code}' --upload-file tiny.nar http://127.0.0.1:$PORT/nar/t2.nar
+stdout '^201$'
+exec curl --silent --write-out '%{http_code}' --upload-file other.nar http://127.0.0.1:$PORT/nar/o.nar
+stdout '^201$'
+exec curl --silent --write-out '%{http_code}' --upload-file good.nar http://127.0.0.1:$PORT/nar/g.nar
+stdout '^201$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put t1t1t1t1t1t1t1t1t1t1t1t1t1t1t1t1.narinfo t1.narinfo
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put t2t2t2t2t2t2t2t2t2t2t2t2t2t2t2t2.narinfo t2.narinfo
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put oooooooooooooooooooooooooooooooo.narinfo o.narinfo
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put gggggggggggggggggggggggggggggggg.narinfo g.narinfo
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=11 '^.'
+stdout -count=3 '^chunk/'
+backdate chunk/ 2000-01-01T00:00:00Z
+backdate nar/ 2000-01-01T00:00:00Z
+backdate t1t1t1t1t1t1t1t1t1t1t1t1t1t1t1t1.narinfo 2000-01-01T00:00:00Z
+backdate t2t2t2t2t2t2t2t2t2t2t2t2t2t2t2t2.narinfo 2000-01-01T00:00:00Z
+backdate oooooooooooooooooooooooooooooooo.narinfo 2000-01-01T00:00:00Z
+backdate gggggggggggggggggggggggggggggggg.narinfo 2000-01-01T00:00:00Z
+
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL
+stderr 'msg=gc deleted=0 freed=0'
+
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --verify --dry-run
+stderr 'msg="corrupt chunk" object=chunk/'$TINY' error=<nil>'
+stderr 'msg="corrupt chunk" object=chunk/'$OTHER' error="'
+stderr 'msg="would delete" object=t1t1t1t1t1t1t1t1t1t1t1t1t1t1t1t1.narinfo'
+stderr 'msg="would delete" object=t2t2t2t2t2t2t2t2t2t2t2t2t2t2t2t2.narinfo'
+stderr 'msg="would delete" object=oooooooooooooooooooooooooooooooo.narinfo'
+stderr 'msg="would delete" object=nar/t1.nar'
+stderr 'msg="would delete" object=nar/t2.nar'
+stderr 'msg="would delete" object=nar/o.nar'
+stderr 'msg="would delete" object=chunk/'$TINY
+stderr 'msg="would delete" object=chunk/'$OTHER
+! stderr 'object=g'
+! stderr 'object=nar/g'
+stderr 'msg=gc deleted=8 freed=0'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=11 '^.'
+
+exec nix-rados-cache gc --pool $NIX_RADOS_CACHE_POOL --verify
+stderr 'msg=gc deleted=8 freed=0'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+stdout -count=3 '^.'
+stdout '^gggggggggggggggggggggggggggggggg\.narinfo$'
+stdout '^nar/g\.nar$'
+stdout -count=1 '^chunk/'
+exec curl --silent --fail --output g-downloaded.nar http://127.0.0.1:$PORT/nar/g.nar
+bin-cmp good.nar g-downloaded.nar
+
+-- extra/tiny.txt --
+one chunk
+-- extra/other.txt --
+two chunk
+-- extra/good.txt --
+a healthy chunk
+-- t1.narinfo --
+StorePath: /nix/store/t1t1t1t1t1t1t1t1t1t1t1t1t1t1t1t1-t1
+URL: nar/t1.nar
+Compression: none
+NarHash: sha256:0000000000000000000000000000000000000000000000000000
+NarSize: 1
+-- t2.narinfo --
+StorePath: /nix/store/t2t2t2t2t2t2t2t2t2t2t2t2t2t2t2t2-t2
+URL: nar/t2.nar
+Compression: none
+NarHash: sha256:0000000000000000000000000000000000000000000000000000
+NarSize: 1
+-- o.narinfo --
+StorePath: /nix/store/oooooooooooooooooooooooooooooooo-o
+URL: nar/o.nar
+Compression: none
+NarHash: sha256:0000000000000000000000000000000000000000000000000000
+NarSize: 1
+-- g.narinfo --
+StorePath: /nix/store/gggggggggggggggggggggggggggggggg-g
+URL: nar/g.nar
+Compression: none
+NarHash: sha256:0000000000000000000000000000000000000000000000000000
+NarSize: 1
