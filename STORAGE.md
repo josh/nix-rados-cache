@@ -27,7 +27,7 @@ A name that does not match one of these shapes is foreign. An implementation nev
 
 ## Plain objects
 
-A narinfo, a NAR listing (`.ls`), a build log (`log/<drv>`) and a realisation (`.doi`) are each one object holding the file's bytes verbatim, created exclusively in a single operation. It has no omap and at most four xattrs: `created`, `upstream`, `access_count` and `accessed`. Maximum size is 16 MiB.
+A narinfo, a NAR listing (`.ls`), a build log (`log/<drv>`) and a realisation (`.doi`) are each one object holding the file's bytes verbatim, created exclusively in a single operation. It has no omap and at most three xattrs: `created`, `upstream` and `accessed`. Maximum size is 16 MiB.
 
 A later write of a narinfo changes nothing except that its `Sig:` lines not already present are added at the end, so signatures accumulate and are never removed or reordered; every other field keeps the bytes from the first upload. The merge reads the stored object and rewrites it whole, conditional on the version it read, because RADOS append is unavailable on erasure-coded pools. A later write of a listing, log or realisation changes nothing.
 
@@ -49,7 +49,6 @@ Stripe 0 carries the xattrs:
 | `striper.size`                | total length of the NAR in bytes        |
 | `created`                     | see below                               |
 | `upstream`                    | see below; absent for uploaded objects  |
-| `access_count`                | see below                               |
 | `accessed`                    | see below                               |
 
 Readers take `S` from `striper.layout.object_size`, never from their own configuration, so NARs written under a different stripe size stay readable.
@@ -68,7 +67,7 @@ The manifest `nar/<name>` lists the chunks in order as fixed 40-byte records: th
 |----------------|-----------------------------------------------------------------------|
 | `codec`        | `none` or `zstd`: how the NAR was uploaded and how it is served       |
 | `striper.size` | length in bytes of the served NAR                                     |
-| `created`, `upstream`, `access_count`, `accessed` | as for stripe 0                    |
+| `created`, `upstream`, `accessed` | as for stripe 0                                    |
 
 A NAR with codec `none` is served as the concatenation of the decompressed chunks and `striper.size` is the sum of the uncompressed lengths. A NAR with codec `zstd` is served as the concatenation of the stored frames, which is a valid zstd stream decoding to the NAR, and `striper.size` is the sum of the compressed lengths; the served bytes differ from the bytes the client uploaded. A NAR uploaded under any other compression is stored striped.
 
@@ -78,7 +77,7 @@ The chunker is FastCDC with normalised chunking level 1 over a 64-bit gear hash.
 
 ## Access metadata
 
-These xattrs live on a plain object or on stripe 0 of a NAR. `created` is when the object was written and never changes. `access_count` is a decimal ASCII count of requests that touched the object and `accessed` is the time of the latest; creation is the first, and every later successful read or write of the same name adds one. Times are RFC 3339 in UTC to the second. The stamp is written only if the object still exists, so it never recreates one a collector has just deleted. The count is best-effort: concurrent requests can lose increments. Both are activity signals for garbage collection, not download tallies; a client fetches a narinfo several times per download and checks it again when pushing.
+These xattrs live on a plain object or on stripe 0 of a NAR. `created` is when the object was written and never changes. `accessed` is the time of the latest request that touched the object: creation is the first, and every later successful read or write of the same name moves it forward. Times are RFC 3339 in UTC to the second. The stamp is written only if the object still exists, so it never recreates one a collector has just deleted. It is an activity signal for garbage collection, not a download tally; a client fetches a narinfo several times per download and checks it again when pushing.
 
 The object's own RADOS mtime is updated by these xattr writes, so it records when the object was last touched, not when its content was written.
 
@@ -100,7 +99,7 @@ Substitute the cache's pool.
 rados -p nixcache ls
 rados -p nixcache --striper get 'nar/<name>' nar.xz
 rados -p nixcache getxattr 'nar/<name>.0000000000000000' striper.size
-rados -p nixcache getxattr 'nar/<name>.0000000000000000' access_count
+rados -p nixcache getxattr 'nar/<name>.0000000000000000' accessed
 rados -p nixcache getxattr 'nar/<name>' codec
 rados -p nixcache get 'nar/<name>' - | xxd | head
 rados -p nixcache get 'chunk/<sha256>' - | zstd -d | head -c 64

@@ -33,19 +33,18 @@ import (
 )
 
 const (
-	cacheInfo        = "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n"
-	maxNarinfoSize   = 16 * 1024 * 1024
-	encodeMinSize    = 1024
-	readPiece        = 1024 * 1024
-	accessCountXattr = "access_count"
-	accessedXattr    = "accessed"
-	createdXattr     = "created"
-	upstreamXattr    = "upstream"
-	sizeXattr        = "striper.size"
-	stripeSizeXattr  = "striper.layout.object_size"
-	codecXattr       = "codec"
-	narMagic         = "\r\x00\x00\x00\x00\x00\x00\x00nix-archive-1"
-	zstdMagic        = "\x28\xb5\x2f\xfd"
+	cacheInfo       = "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n"
+	maxNarinfoSize  = 16 * 1024 * 1024
+	encodeMinSize   = 1024
+	readPiece       = 1024 * 1024
+	accessedXattr   = "accessed"
+	createdXattr    = "created"
+	upstreamXattr   = "upstream"
+	sizeXattr       = "striper.size"
+	stripeSizeXattr = "striper.layout.object_size"
+	codecXattr      = "codec"
+	narMagic        = "\r\x00\x00\x00\x00\x00\x00\x00nix-archive-1"
+	zstdMagic       = "\x28\xb5\x2f\xfd"
 )
 
 var (
@@ -514,7 +513,7 @@ func stampNew(op *rados.WriteOp, upstream string) {
 
 func stamp(op *rados.WriteOp, upstream string) {
 	op.SetXattr(createdXattr, now())
-	stampAccess(op, 1)
+	op.SetXattr(accessedXattr, now())
 	if upstream != "" {
 		op.SetXattr(upstreamXattr, []byte(upstream))
 	}
@@ -727,24 +726,15 @@ func (h *handler) putChunk(name string, data []byte, calls *int) (int, error) {
 	return int(stat.Size), cmp.Or(err, touch.Operate(h.ioctx, name, rados.OperationNoFlag))
 }
 
-func stampAccess(op *rados.WriteOp, count uint64) {
-	op.SetXattr(accessCountXattr, []byte(strconv.FormatUint(count, 10)))
-	op.SetXattr(accessedXattr, now())
-}
-
 func (h *handler) setAccess(name string, s *reqStats) {
-	s.radosCalls += 2
-	xattrs, _ := h.ioctx.ListXattrs(name)
-	count, _ := strconv.ParseUint(string(xattrs[accessCountXattr]), 10, 64)
-	count++
+	s.radosCalls++
 	op := rados.CreateWriteOp()
 	defer op.Release()
 	op.AssertExists()
-	stampAccess(op, count)
+	op.SetXattr(accessedXattr, now())
 	if err := op.Operate(h.ioctx, name, rados.OperationNoFlag); err != nil {
-		slog.Error("access count", "object", name, "error", err)
+		slog.Error("access stamp", "object", name, "error", err)
 	}
-	s.accessCount = count
 }
 
 type idleConn struct {
@@ -914,14 +904,13 @@ func newHandler(ioctx *rados.IOContext, stripeSize, chunkSize int, caDerivations
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		mux.ServeHTTP(sw, r)
 		slog.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start),
-			"req_bytes", r.ContentLength, "resp_bytes", sw.bytes, "rados_calls", sw.stats.radosCalls, "access_count", sw.stats.accessCount, "upstream", sw.stats.upstream)
+			"req_bytes", r.ContentLength, "resp_bytes", sw.bytes, "rados_calls", sw.stats.radosCalls, "upstream", sw.stats.upstream)
 	})
 }
 
 type reqStats struct {
-	radosCalls  int
-	accessCount uint64
-	upstream    string
+	radosCalls int
+	upstream   string
 }
 
 func stats(w http.ResponseWriter) *reqStats {

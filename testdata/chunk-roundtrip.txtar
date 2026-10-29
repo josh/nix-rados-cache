@@ -21,20 +21,16 @@ exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/raw.nar c
 stdout '^none$'
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/raw.nar striper.size
 stdout '^1000280$'
-exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/raw.nar access_count
-stdout '^1$'
 
 exec curl --silent --head http://127.0.0.1:$PORT/nar/raw.nar
 stdout 'HTTP/1.1 200'
 stdout 'Content-Length: 1000280'
 exec curl --silent --fail --output downloaded.nar http://127.0.0.1:$PORT/nar/raw.nar
 bin-cmp payload.nar downloaded.nar
-wait4log 'msg=request method=GET path=/nar/raw.nar status=200 .* resp_bytes=1000280 .* access_count=3' server.log
+wait4log 'msg=request method=GET path=/nar/raw.nar status=200 .* resp_bytes=1000280 ' server.log
 
 exec curl --silent --write-out '%{http_code}' --upload-file payload.nar http://127.0.0.1:$PORT/nar/raw.nar
 stdout '^200$'
-exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/raw.nar access_count
-stdout '^4$'
 
 exec curl --silent --write-out '%{http_code}' --upload-file payload.nar.zst http://127.0.0.1:$PORT/nar/z.nar.zst
 stdout '^201$'
