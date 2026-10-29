@@ -1184,5 +1184,5 @@ func writeStoreError(w http.ResponseWriter, name string, err error) {
 		return
 	}
 	slog.Error("rados error", "object", name, "error", err)
-	http.Error(w, err.Error(), http.StatusInternalServerError)
+	http.Error(w, "internal server error", http.StatusInternalServerError)
 }
