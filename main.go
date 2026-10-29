@@ -1034,8 +1034,8 @@ func (h *handler) getNAR(w http.ResponseWriter, r *http.Request, name string) {
 	}
 	size, _ := strconv.ParseUint(string(xattrs[sizeXattr]), 10, 64)
 	stripeSize, _ := strconv.Atoi(string(xattrs[stripeSizeXattr]))
-	if stripeSize <= 0 {
-		writeStoreError(w, name, fmt.Errorf("bad %s xattr %q", stripeSizeXattr, xattrs[stripeSizeXattr]))
+	if stripeSize <= 0 || string(xattrs["striper.layout.stripe_count"]) != "1" || string(xattrs["striper.layout.stripe_unit"]) != string(xattrs[stripeSizeXattr]) {
+		writeStoreError(w, name, fmt.Errorf("unsupported striper layout object_size=%q stripe_count=%q stripe_unit=%q", xattrs[stripeSizeXattr], xattrs["striper.layout.stripe_count"], xattrs["striper.layout.stripe_unit"]))
 		return
 	}
 	h.setAccess(head, s)

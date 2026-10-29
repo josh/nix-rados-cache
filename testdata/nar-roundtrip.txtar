@@ -35,6 +35,10 @@ exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/1b6zrx9zg
 stdout '^1048576$'
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL --striper get nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz striped.nar.xz
 bin-cmp payload.nar.xz striped.nar.xz
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL setxattr nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz.0000000000000000 striper.layout.stripe_count 2
+exec curl --silent --write-out '%{http_code}' --output /dev/null http://127.0.0.1:$PORT/nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz
+stdout '^500$'
+wait4log 'msg="rados error" object=nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz error="unsupported striper layout object_size=\\"16777216\\" stripe_count=\\"2\\" stripe_unit=\\"16777216\\""' server.log
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
 stdout -count=1 '^nar/'
 
