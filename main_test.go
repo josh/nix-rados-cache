@@ -104,6 +104,7 @@ func TestScript(t *testing.T) {
 					"capture-output": cmdCaptureOutput,
 					"create-pool":    cmdCreatePool,
 					"http-hold":      cmdHTTPHold,
+					"http-send":      cmdHTTPSend,
 					"http-serve":     cmdHTTPServe,
 					"http-stall":     cmdHTTPStall,
 					"nar-pack":       cmdNarPack,
@@ -326,17 +327,49 @@ func cmdCaptureOutput(ts *testscript.TestScript, neg bool, args []string) {
 	ts.Setenv(args[0], value)
 }
 
+func dialPut(ts *testscript.TestScript, rawURL, length string) net.Conn {
+	u, err := url.Parse(rawURL)
+	ts.Check(err)
+	conn, err := net.Dial("tcp", u.Host)
+	ts.Check(err)
+	_, _ = fmt.Fprintf(conn, "PUT %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %s\r\n\r\n", u.RequestURI(), u.Host, length)
+	return conn
+}
+
 func cmdHTTPHold(ts *testscript.TestScript, neg bool, args []string) {
 	if neg || len(args) != 2 {
 		ts.Fatalf("usage: http-hold <url> <content-length>")
 	}
-	u, err := url.Parse(args[0])
-	ts.Check(err)
-	conn, err := net.Dial("tcp", u.Host)
-	ts.Check(err)
+	conn := dialPut(ts, args[0], args[1])
 	defer func() { _ = conn.Close() }()
-	_, _ = fmt.Fprintf(conn, "PUT %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %s\r\n\r\n", u.RequestURI(), u.Host, args[1])
 	_, _ = io.Copy(io.Discard, conn)
+}
+
+var sending sync.Map
+
+// http-send drives one PUT in pieces: the first call for a URL opens the connection and sends the headers, every call with a file
+// sends that file's bytes, and a call without one closes the connection so the server sees the body end early.
+func cmdHTTPSend(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) < 2 || len(args) > 3 {
+		ts.Fatalf("usage: http-send <url> <content-length> [file]")
+	}
+	v, ok := sending.Load(args[0])
+	if !ok {
+		conn := dialPut(ts, args[0], args[1])
+		ts.Defer(func() { _ = conn.Close() })
+		sending.Store(args[0], conn)
+		v = conn
+	}
+	conn := v.(net.Conn)
+	if len(args) == 2 {
+		sending.Delete(args[0])
+		ts.Check(conn.Close())
+		return
+	}
+	data, err := os.ReadFile(ts.MkAbs(args[2]))
+	ts.Check(err)
+	_, err = conn.Write(data)
+	ts.Check(err)
 }
 
 func cmdHTTPStall(ts *testscript.TestScript, neg bool, args []string) {

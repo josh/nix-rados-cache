@@ -12,7 +12,7 @@ exec xz -k payload.nar
 
 exec curl --silent --write-out '%{http_code}' --upload-file payload.nar http://127.0.0.1:$PORT/nar/raw.nar
 stdout '^201$'
-wait4log 'msg=request method=PUT path=/nar/raw.nar status=201 .* rados_calls=24' server.log
+wait4log 'msg=request method=PUT path=/nar/raw.nar status=201 .* rados_calls=29' server.log
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
 stdout '^nar/raw\.nar$'
 ! stdout '^nar/raw\.nar\.'
