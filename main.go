@@ -13,6 +13,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"maps"
@@ -55,6 +56,8 @@ var (
 	stripePattern     = regexp.MustCompile(`^nar/[A-Za-z0-9._-]+\.[0-9a-f]{16}$`)
 	manifestPattern   = regexp.MustCompile(`^nar/[A-Za-z0-9._-]+$`)
 	chunkPattern      = regexp.MustCompile(`^chunk/[0-9a-f]{64}$`)
+	narHashPattern    = regexp.MustCompile(`^nar/([0-9a-df-np-sv-z]{52})\.nar(\..+)?$`)
+	errNARHash        = errors.New("NAR hash mismatch")
 	zstdEncoder, _    = zstd.NewWriter(nil)
 )
 
@@ -575,6 +578,22 @@ func chunkName(sum []byte) string {
 	return "chunk/" + hex.EncodeToString(sum)
 }
 
+func nixBase32(sum []byte) string {
+	const alphabet = "0123456789abcdfghijklmnpqrsvwxyz"
+	n := (len(sum)*8 + 4) / 5
+	out := make([]byte, n)
+	for i := range n {
+		b := (n - 1 - i) * 5
+		j, bit := b/8, b%8
+		c := uint(sum[j]) >> bit
+		if j+1 < len(sum) {
+			c |= uint(sum[j+1]) << (8 - bit)
+		}
+		out[i] = alphabet[c&0x1f]
+	}
+	return string(out)
+}
+
 func (h *handler) putNAR(name string, body io.Reader, upstream string, s *reqStats) error {
 	ioctx, stripeSize, calls := h.ioctx, h.stripeSize, &s.radosCalls
 	*calls += 2
@@ -587,15 +606,20 @@ func (h *handler) putNAR(name string, body io.Reader, upstream string, s *reqSta
 		h.setAccess(name, s)
 		return cmp.Or[error](err, rados.ErrObjectExists)
 	}
+	var want string
+	digest := sha256.New()
+	if m := narHashPattern.FindStringSubmatch(name); m != nil {
+		want, body = m[1], io.TeeReader(body, digest)
+	}
 	if h.chunkSize > 0 {
 		br := bufio.NewReader(body)
 		switch magic, _ := br.Peek(len(narMagic)); {
 		case string(magic) == narMagic:
-			return h.putChunked(name, br, "none", upstream, calls)
+			return h.putChunked(name, br, "none", upstream, digest, want, calls)
 		case strings.HasPrefix(string(magic), zstdMagic):
 			dec, _ := zstd.NewReader(br, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxWindow(64<<20))
 			defer dec.Close()
-			return h.putChunked(name, dec, "zstd", upstream, calls)
+			return h.putChunked(name, dec, "zstd", upstream, digest, want, calls)
 		}
 		body = br
 	}
@@ -625,6 +649,9 @@ func (h *handler) putNAR(name string, body io.Reader, upstream string, s *reqSta
 			break
 		}
 	}
+	if want != "" && nixBase32(digest.Sum(nil)) != want {
+		return errNARHash
+	}
 	size := []byte(strconv.Itoa(stripeSize))
 	op := rados.CreateWriteOp()
 	defer op.Release()
@@ -640,7 +667,7 @@ func (h *handler) putNAR(name string, body io.Reader, upstream string, s *reqSta
 
 // putChunked stores r as chunk objects and a manifest of 40-byte records: sha256, uncompressed length, compressed length.
 // The manifest so far is flushed without its size xattr every stripe size of input so the collector can tell a live upload from leftovers.
-func (h *handler) putChunked(name string, r io.Reader, codec, upstream string, calls *int) error {
+func (h *handler) putChunked(name string, r io.Reader, codec, upstream string, digest hash.Hash, want string, calls *int) error {
 	c := newChunker(r, h.chunkSize)
 	var manifest, out []byte
 	var size uint64
@@ -671,6 +698,9 @@ func (h *handler) putChunked(name string, r io.Reader, codec, upstream string, c
 			h.flushManifest(name, manifest, calls)
 			flushAt = total + h.stripeSize
 		}
+	}
+	if want != "" && nixBase32(digest.Sum(nil)) != want {
+		return errNARHash
 	}
 	op := rados.CreateWriteOp()
 	defer op.Release()
@@ -1171,6 +1201,8 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 		}
 	case errors.As(err, new(*http.MaxBytesError)):
 		http.Error(w, "object too large", http.StatusRequestEntityTooLarge)
+	case errors.Is(err, errNARHash):
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	case err != nil:
 		writeStoreError(w, name, err)
 	default:
