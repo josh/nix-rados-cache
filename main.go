@@ -1066,14 +1066,27 @@ func (h *handler) getChunked(w http.ResponseWriter, r *http.Request, name string
 		writeStoreError(w, name, err)
 		return
 	}
+	codec, size := string(xattrs[codecXattr]), string(xattrs[sizeXattr])
+	var sum uint64
+	off := 36
+	if codec == "none" {
+		off = 32
+	}
+	for rec := manifest; len(rec) >= 40; rec = rec[40:] {
+		sum += uint64(binary.LittleEndian.Uint32(rec[off:]))
+	}
+	if (codec != "none" && codec != "zstd") || strconv.FormatUint(sum, 10) != size {
+		writeStoreError(w, name, fmt.Errorf("manifest of %d bytes with codec %q lists %d bytes but size is %s", len(manifest), codec, sum, size))
+		return
+	}
 	h.setAccess(name, s)
 	w.Header().Set("Content-Type", "application/x-nix-nar")
-	w.Header().Set("Content-Length", string(xattrs[sizeXattr]))
+	w.Header().Set("Content-Length", size)
 	if r.Method == http.MethodHead {
 		return
 	}
 	var dec *zstd.Decoder
-	if string(xattrs[codecXattr]) == "none" {
+	if codec == "none" {
 		dec, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
 		defer dec.Close()
 	}
