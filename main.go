@@ -781,6 +781,7 @@ type handler struct {
 	chunkSize  int
 	chunkEnc   *zstd.Encoder
 	uploads    chan struct{}
+	pulls      chan struct{}
 	upstreams  []string
 	trusted    map[string]ed25519.PublicKey
 	client     *http.Client
@@ -837,8 +838,8 @@ func (c *clientWriter) Write(p []byte) (int, error) {
 }
 
 func (h *handler) pullNAR(w http.ResponseWriter, r *http.Request, name string, s *reqStats) bool {
-	h.uploads <- struct{}{}
-	defer func() { <-h.uploads }()
+	h.pulls <- struct{}{}
+	defer func() { <-h.pulls }()
 	resp, u := h.fetch(r.Method, name)
 	if resp == nil {
 		return false
@@ -892,7 +893,7 @@ func newHandler(ioctx *rados.IOContext, stripeSize, chunkSize int, caDerivations
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
 	transport.ResponseHeaderTimeout = 10 * time.Second
-	h := &handler{ioctx: ioctx, stripeSize: stripeSize, chunkSize: chunkSize, uploads: make(chan struct{}, maxUploads), upstreams: upstreams, trusted: trusted, client: &http.Client{Transport: transport}, ioTimeout: ioTimeout}
+	h := &handler{ioctx: ioctx, stripeSize: stripeSize, chunkSize: chunkSize, uploads: make(chan struct{}, maxUploads), pulls: make(chan struct{}, maxUploads), upstreams: upstreams, trusted: trusted, client: &http.Client{Transport: transport}, ioTimeout: ioTimeout}
 	if chunkSize > 0 {
 		h.chunkEnc, _ = zstd.NewWriter(nil, zstd.WithEncoderConcurrency(maxUploads), zstd.WithWindowSize(min(4*chunkSize, 8<<20)), zstd.WithLowerEncoderMem(true), zstd.WithEncoderLevel(zstd.SpeedBetterCompression))
 	}

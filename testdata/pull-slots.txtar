@@ -1,0 +1,13 @@
+tail-logs
+create-pool
+
+bin-file upstream.nar.xz 1000
+http-serve 127.0.0.1:$PORT2 upstream.nar.xz
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --upstream http://127.0.0.1:$PORT2 --max-uploads 1 --io-timeout 3s --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+bin-file part 10
+http-send http://127.0.0.1:$PORT/nar/held.nar.xz 1000 part
+exec curl --silent --fail --max-time 2 --output pulled.nar.xz http://127.0.0.1:$PORT/nar/pulled.nar.xz
+bin-cmp upstream.nar.xz pulled.nar.xz
+http-send http://127.0.0.1:$PORT/nar/held.nar.xz 1000
