@@ -217,19 +217,23 @@ func cmdCreatePool(ts *testscript.TestScript, neg bool, args []string) {
 }
 
 func cmdWait4HTTP(ts *testscript.TestScript, neg bool, args []string) {
-	if neg || len(args) != 1 {
-		ts.Fatalf("usage: wait4http <url>")
+	if neg || len(args) < 1 || len(args) > 2 {
+		ts.Fatalf("usage: wait4http <url> [status]")
+	}
+	want := http.StatusOK
+	if len(args) == 2 {
+		want, _ = strconv.Atoi(args[1])
 	}
 	for range 150 {
 		if resp, err := http.Get(args[0]); err == nil {
 			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
+			if resp.StatusCode == want {
 				return
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	ts.Fatalf("%s never returned 200", args[0])
+	ts.Fatalf("%s never returned %d", args[0], want)
 }
 
 func cmdWait4Log(ts *testscript.TestScript, neg bool, args []string) {
