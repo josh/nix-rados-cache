@@ -72,6 +72,7 @@ func main() {
 	ioTimeout := flag.Duration("io-timeout", 30*time.Second, "longest pause allowed while reading a request body or writing a response")
 	maxUploads := flag.Int("max-uploads", 8, "uploads handled at once; the rest wait")
 	configFile := flag.String("config", "", "JSON file of settings keyed by flag name; a flag given on the command line wins")
+	readOnly := flag.Bool("read-only", false, "answer every PUT with 405; pull-through still stores what it fetches")
 	var chunkSize int64
 	flag.Func("chunk-size", "average chunk size for content-defined chunking of raw and zstd NARs, a power of two with K, M, G suffixes; 0 stripes every NAR", func(s string) (err error) { chunkSize, err = parseSize(s); return })
 	keys := trustedKeysFlag(flag.CommandLine)
@@ -130,7 +131,7 @@ func main() {
 		slog.Error("listen", "error", err)
 		os.Exit(1)
 	}
-	srv := &http.Server{Handler: newHandler(ioctx, *stripeSize, int(chunkSize), *caDerivations, *maxUploads, upstreams, keys, *ioTimeout)}
+	srv := &http.Server{Handler: newHandler(ioctx, *stripeSize, int(chunkSize), *caDerivations, *readOnly, *maxUploads, upstreams, keys, *ioTimeout)}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -888,7 +889,7 @@ func (h *handler) pullPlain(name string, s *reqStats) ([]byte, error) {
 	return body, nil
 }
 
-func newHandler(ioctx *rados.IOContext, stripeSize, chunkSize int, caDerivations bool, maxUploads int, upstreams []string, trusted map[string]ed25519.PublicKey, ioTimeout time.Duration) http.Handler {
+func newHandler(ioctx *rados.IOContext, stripeSize, chunkSize int, caDerivations, readOnly bool, maxUploads int, upstreams []string, trusted map[string]ed25519.PublicKey, ioTimeout time.Duration) http.Handler {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
 	transport.ResponseHeaderTimeout = 10 * time.Second
@@ -912,7 +913,11 @@ func newHandler(ioctx *rados.IOContext, stripeSize, chunkSize int, caDerivations
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		mux.ServeHTTP(sw, r)
+		if readOnly && r.Method == http.MethodPut {
+			http.Error(sw, "read-only cache", http.StatusMethodNotAllowed)
+		} else {
+			mux.ServeHTTP(sw, r)
+		}
 		slog.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start),
 			"req_bytes", r.ContentLength, "resp_bytes", sw.bytes, "rados_calls", sw.stats.radosCalls, "access_count", sw.stats.accessCount, "upstream", sw.stats.upstream)
 	})

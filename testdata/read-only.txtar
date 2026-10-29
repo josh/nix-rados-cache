@@ -1,0 +1,32 @@
+tail-logs
+create-pool
+
+exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --read-only --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file hello.narinfo http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
+stdout '^405$'
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file hello.narinfo http://127.0.0.1:$PORT/nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz
+stdout '^405$'
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file hello.narinfo http://127.0.0.1:$PORT/log/some-drv
+stdout '^405$'
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file hello.narinfo http://127.0.0.1:$PORT/nix-cache-info
+stdout '^405$'
+wait4log 'msg=request method=PUT path=/nix-cache-info status=405' server.log
+exec curl --silent --write-out '%{http_code}' --output /dev/null http://127.0.0.1:$PORT/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2.narinfo
+stdout '^404$'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+! stdout '^.'
+
+exec nix store add-path --store $WORK/store1 --name hello fixture
+capture-output HELLO
+! exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT $HELLO
+stderr '405'
+exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
+! stdout '^.'
+
+-- hello.narinfo --
+StorePath: /nix/store/g3hx9q0dy5n1x2r5ykbf7rjd0z4a0vq2-hello
+URL: nar/1b6zrx9zg7k4yw1fpvkz51h1qq9p3p0h2mxrfhwzw2c5pvz0hzz1.nar.xz
+-- fixture/hello.txt --
+hello from nix-rados-cache
