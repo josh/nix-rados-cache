@@ -124,6 +124,11 @@ func main() {
 		slog.Error("failed to open pool", "error", err)
 		os.Exit(1)
 	}
+	v, _ := conn.GetConfigOption("osd_max_object_size")
+	if limit, err := parseSize(v); err == nil && (int64(*stripeSize) > limit || 4*chunkSize > limit) {
+		fmt.Fprintf(os.Stderr, "--stripe-size and four times --chunk-size must not exceed osd_max_object_size %d\n", limit)
+		os.Exit(1)
+	}
 
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
@@ -1182,6 +1187,11 @@ func (h *handler) putObject(w http.ResponseWriter, r *http.Request) {
 func writeStoreError(w http.ResponseWriter, name string, err error) {
 	if errors.Is(err, rados.ErrNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	var coded interface{ ErrorCode() int }
+	if errors.As(err, &coded) && (coded.ErrorCode() == -int(syscall.EFBIG) || coded.ErrorCode() == -int(syscall.EMSGSIZE)) {
+		http.Error(w, "object too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	slog.Error("rados error", "object", name, "error", err)

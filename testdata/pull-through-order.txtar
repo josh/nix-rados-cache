@@ -24,6 +24,9 @@ stdout -count=2 '^nar/'
 kill -INT server
 wait server
 create-pool
+cp $CEPH_CONF client.conf
+exec sed --in-place 's/^osd_max_object_size = .*/osd_max_object_size = 67108864/' client.conf
+env CEPH_CONF=$WORK/client.conf
 exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --upstream http://127.0.0.1:$PORT2 --stripe-size 67108864 --log-file server.log &oversized&
 wait4http http://127.0.0.1:$PORT/nix-cache-info
 

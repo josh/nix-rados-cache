@@ -1,13 +1,21 @@
 tail-logs
 create-pool
 
+! exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --stripe-size 67108864
+stderr 'must not exceed osd_max_object_size 33554432'
+! exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --chunk-size 16M
+stderr 'must not exceed osd_max_object_size 33554432'
+
+cp $CEPH_CONF client.conf
+exec sed --in-place 's/^osd_max_object_size = .*/osd_max_object_size = 67108864/' client.conf
+env CEPH_CONF=$WORK/client.conf
 exec nix-rados-cache --pool $NIX_RADOS_CACHE_POOL --listen 127.0.0.1:$PORT --stripe-size 67108864 --log-file server.log &toobig&
 wait4http http://127.0.0.1:$PORT/nix-cache-info
 
 bin-file huge.nar.xz 67108864
 exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file huge.nar.xz http://127.0.0.1:$PORT/nar/huge.nar.xz
-stdout '^500$'
-wait4log 'msg=request method=PUT path=/nar/huge.nar.xz status=500' server.log
+stdout '^413$'
+wait4log 'msg=request method=PUT path=/nar/huge.nar.xz status=413' server.log
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL ls
 ! stdout '^nar/'
 kill -INT toobig
