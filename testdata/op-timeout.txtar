@@ -1,0 +1,30 @@
+tail-logs
+
+exec ceph --conf $CEPH_CONF osd crush add-bucket nowhere-$PORT root
+exec ceph --conf $CEPH_CONF osd crush rule create-replicated nowhere-$PORT nowhere-$PORT osd
+exec ceph --conf $CEPH_CONF osd pool create optimeout-$PORT 8
+exec rados --conf $CEPH_CONF --pool optimeout-$PORT put ready a.narinfo
+exec rados --conf $CEPH_CONF --pool optimeout-$PORT rm ready
+
+exec nix-rados-cache --pool optimeout-$PORT --listen 127.0.0.1:$PORT --io-timeout 2s --log-file server.log &server&
+wait4http http://127.0.0.1:$PORT/nix-cache-info
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file a.narinfo http://127.0.0.1:$PORT/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.narinfo
+stdout '^201$'
+
+exec ceph --conf $CEPH_CONF osd pool set optimeout-$PORT crush_rule nowhere-$PORT
+wait4http http://127.0.0.1:$PORT/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.narinfo 500
+wait4log 'msg="rados error" object=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.narinfo error="rados: ret=-110, Connection timed out"' server.log
+exec curl --silent --write-out '%{http_code}' --output /dev/null --max-time 20 --upload-file a.narinfo http://127.0.0.1:$PORT/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.narinfo
+stdout '^500$'
+
+exec ceph --conf $CEPH_CONF osd pool set optimeout-$PORT crush_rule replicated_rule
+wait4http http://127.0.0.1:$PORT/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.narinfo
+exec curl --silent --write-out '%{http_code}' --output /dev/null --upload-file a.narinfo http://127.0.0.1:$PORT/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.narinfo
+stdout '^201$'
+
+exec ceph --conf $CEPH_CONF osd pool delete optimeout-$PORT optimeout-$PORT --yes-i-really-really-mean-it
+exec ceph --conf $CEPH_CONF osd crush rule rm nowhere-$PORT
+exec ceph --conf $CEPH_CONF osd crush remove nowhere-$PORT
+
+-- a.narinfo --
+StorePath: /nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-a

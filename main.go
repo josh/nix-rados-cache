@@ -69,7 +69,7 @@ func main() {
 	caDerivations := flag.Bool("ca-derivations", false, "store realisations of content-addressed derivations")
 	logFile := flag.String("log-file", "", "append logs to this file instead of stderr")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 30*time.Second, "how long in-flight requests may finish after a shutdown signal")
-	ioTimeout := flag.Duration("io-timeout", 30*time.Second, "longest pause allowed while reading a request body or writing a response")
+	ioTimeout := flag.Duration("io-timeout", 30*time.Second, "longest pause allowed while reading a request body, writing a response or waiting on a RADOS operation")
 	maxUploads := flag.Int("max-uploads", 8, "uploads handled at once; the rest wait")
 	configFile := flag.String("config", "", "JSON file of settings keyed by flag name; a flag given on the command line wins")
 	var chunkSize int64
@@ -119,7 +119,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	_, ioctx, err := openPool(*pool)
+	conn, ioctx, err := openPool(*pool)
 	if err != nil {
 		slog.Error("failed to open pool", "error", err)
 		os.Exit(1)
@@ -146,6 +146,7 @@ func main() {
 	}()
 
 	slog.Info("listening", "address", *listen, "pool", *pool, "stripe_size", *stripeSize, "chunk_size", chunkSize, "ca_derivations", *caDerivations, "upstreams", upstreams, "trusted_keys", len(keys))
+	_ = conn.SetConfigOption("rados_osd_op_timeout", fmt.Sprint(ioTimeout.Seconds()))
 	if err := srv.Serve(idleListener{ln, *ioTimeout}); !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
