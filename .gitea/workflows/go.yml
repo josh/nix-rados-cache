@@ -9,30 +9,24 @@ permissions:
 
 jobs:
   test:
-    name: test (${{ matrix.ceph-release }}, linux/${{ matrix.arch }})
+    name: test (${{ matrix.ceph }}, linux/${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
-        ceph-release:
-          - squid
+        ceph:
           - tentacle
+          - squid
         arch:
           - amd64
           - arm64
-        include:
-          - ceph-release: squid
-            ubuntu: "24.04"
-          - ceph-release: tentacle
-            ubuntu: "26.04"
-    runs-on: ubuntu-${{ matrix.ubuntu }}-${{ matrix.arch }}
+    runs-on: ceph-${{ matrix.ceph }}-${{ matrix.arch }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ceph-mon ceph-osd librados-dev
+          dnf install --assumeyes xz
 
       - name: Print Ceph version
         run: ceph --version
