@@ -53,7 +53,7 @@ exec nix copy --from $WORK/store1 --to http://127.0.0.1:$PORT2?secret-key=$WORK/
 wait4log 'msg="untrusted upstream narinfo" url=http://127.0.0.1:[0-9]+ object=[a-z0-9]+\.narinfo' server.log
 exec nix store sign --store http://127.0.0.1:$PORT2 --key-file key1.sec $THIRD
 exec nix path-info --store http://127.0.0.1:$PORT $THIRD
-wait4log 'msg=request method=GET path=/[a-z0-9]+\.narinfo status=200 .* upstream=http://127.0.0.1:[0-9]+' server.log
+wait4log 'msg=request method=(GET|HEAD) path=/[a-z0-9]+\.narinfo status=200 .* upstream=http://127.0.0.1:[0-9]+' server.log
 
 exec nix store add-path --store $WORK/store1 --name solo solo
 capture-output SOLO
