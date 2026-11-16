@@ -30,8 +30,9 @@ stdout '^201$'
 stderr 'lacks a signature by a trusted key'
 
 exec nix store sign --store http://127.0.0.1:$PORT --key-file key1.sec /nix/store/signd000000000000000000000000000-signed
-exec curl --silent --compressed --dump-header narinfo-headers.txt --output narinfo.out http://127.0.0.1:$PORT/signd000000000000000000000000000.narinfo
+exec curl --silent -H 'Accept-Encoding: zstd' --dump-header narinfo-headers.txt --output narinfo.zst http://127.0.0.1:$PORT/signd000000000000000000000000000.narinfo
 grep 'Content-Encoding: zstd' narinfo-headers.txt
+zstd -d narinfo.zst narinfo.out
 grep '^Sig: key1:' narinfo.out
 exec nix copy --from http://127.0.0.1:$PORT --to $WORK/store2 --trusted-public-keys $KEY1_PUB /nix/store/signd000000000000000000000000000-signed
 cmp fixture/hello.txt $WORK/store2/nix/store/signd000000000000000000000000000-signed/hello.txt

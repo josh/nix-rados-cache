@@ -7,8 +7,8 @@ wait4http http://127.0.0.1:$PORT/nix-cache-info
 mkdir fixture
 bin-file fixture/blob 1000000 roundtrip
 nar-pack fixture payload.nar
-exec zstd -q payload.nar -o payload.nar.zst
-exec xz -k payload.nar
+zstd payload.nar payload.nar.zst
+bin-file payload.nar.xz 500000 xz
 
 exec curl --silent --write-out '%{http_code}' --upload-file payload.nar http://127.0.0.1:$PORT/nar/raw.nar
 stdout '^201$'
@@ -45,7 +45,7 @@ stdout -count=18 '^chunk/'
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL getxattr nar/z.nar.zst codec
 stdout '^zstd$'
 exec curl --silent --fail --output downloaded.nar.zst http://127.0.0.1:$PORT/nar/z.nar.zst
-exec zstd -q -d downloaded.nar.zst -o unpacked.nar
+zstd -d downloaded.nar.zst unpacked.nar
 bin-cmp payload.nar unpacked.nar
 
 exec curl --silent --write-out '%{http_code}' --upload-file payload.nar.xz http://127.0.0.1:$PORT/nar/x.nar.xz
@@ -78,8 +78,8 @@ cp extra/tiny.txt tiny/tiny.txt
 nar-pack tiny tiny.nar
 exec sha256sum tiny.nar
 capture-output TINY '^([0-9a-f]{64}) '
-exec zstd -q tiny.nar -o tiny.nar.zst
-exec zstd -q --no-check tiny.nar -o pre
+zstd tiny.nar tiny.nar.zst
+zstd --no-check tiny.nar pre
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put chunk/$TINY pre
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL stat chunk/$TINY
 capture-output PRE 'size ([0-9]+)'
@@ -103,7 +103,7 @@ wait4log 'msg="read chunk" object=nar/tiny.nar.zst chunk=chunk/'$TINY' error="un
 bin-file garbage $PRE
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL put chunk/$TINY garbage
 exec curl --silent --fail --output garbled.nar.zst http://127.0.0.1:$PORT/nar/tiny.nar.zst
-! exec zstd -q -d garbled.nar.zst -o garbled.nar
+! zstd -d garbled.nar.zst garbled.nar
 ! exec curl --silent --fail --output /dev/null http://127.0.0.1:$PORT/nar/tiny.nar
 wait4log 'msg="read chunk" object=nar/tiny.nar chunk=chunk/'$TINY server.log
 exec rados --conf $CEPH_CONF --pool $NIX_RADOS_CACHE_POOL rm chunk/$TINY

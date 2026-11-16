@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ceph/go-ceph/rados"
+	"github.com/klauspost/compress/zstd"
 	"github.com/rogpeppe/go-internal/testscript"
 )
 
@@ -111,6 +112,7 @@ func TestScript(t *testing.T) {
 					"tail-logs":      cmdTailLogs,
 					"wait4http":      cmdWait4HTTP,
 					"wait4log":       cmdWait4Log,
+					"zstd":           cmdZstd,
 				},
 				Setup: func(env *testscript.Env) error {
 					env.Setenv("CEPH_CONF", confPath)
@@ -311,6 +313,35 @@ func cmdNarPack(ts *testscript.TestScript, neg bool, args []string) {
 	cmd := exec.Command("nix", "nar", "pack", ts.MkAbs(args[0]))
 	cmd.Stdout, cmd.Stderr = file, os.Stderr
 	ts.Check(cmd.Run())
+}
+
+func cmdZstd(ts *testscript.TestScript, neg bool, args []string) {
+	decode := len(args) == 3 && args[0] == "-d"
+	crc := !(len(args) == 3 && args[0] == "--no-check")
+	if decode || !crc {
+		args = args[1:]
+	}
+	if len(args) != 2 || (neg && !decode) {
+		ts.Fatalf("usage: zstd [--no-check] <in> <out> | [!] zstd -d <in> <out>")
+	}
+	data := []byte(ts.ReadFile(args[0]))
+	var err error
+	if decode {
+		dec, _ := zstd.NewReader(nil)
+		defer dec.Close()
+		data, err = dec.DecodeAll(data, nil)
+	} else {
+		enc, _ := zstd.NewWriter(nil, zstd.WithEncoderCRC(crc))
+		data = enc.EncodeAll(data, nil)
+	}
+	if neg {
+		if err == nil {
+			ts.Fatalf("%s unexpectedly decoded", args[0])
+		}
+		return
+	}
+	ts.Check(err)
+	ts.Check(os.WriteFile(ts.MkAbs(args[1]), data, 0o644))
 }
 
 func cmdCaptureOutput(ts *testscript.TestScript, neg bool, args []string) {
