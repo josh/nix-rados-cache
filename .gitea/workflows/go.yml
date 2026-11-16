@@ -37,9 +37,34 @@ jobs:
       - name: Print Ceph version
         run: ceph --version
 
-      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-        with:
-          extra-conf: extra-experimental-features = ca-derivations
+      - name: Download Nix
+        run: |
+          case "$(uname -m)" in
+            x86_64) sha256=b12ab64a291e41846b9da37b7f56eafa7683deaa267bafb2ed43440ab2f45f13 ;;
+            aarch64) sha256=1f177b572baadf8c09750028f047fe943a3615a34f3e4a43927367a1e0120801 ;;
+          esac
+          cd "$RUNNER_TEMP"
+          curl --fail --location --retry 5 --retry-all-errors --output nix.tar.xz "https://releases.nixos.org/nix/nix-$NIX_VERSION/nix-$NIX_VERSION-$(uname -m)-linux.tar.xz"
+          echo "$sha256  nix.tar.xz" | sha256sum --check
+          mkdir nix
+          tar --extract --xz --file nix.tar.xz --directory nix --strip-components 1
+        env:
+          # renovate: datasource=github-tags depName=NixOS/nix
+          NIX_VERSION: "2.35.6"
+
+      - name: Configure Nix
+        run: |
+          mkdir -p /etc/nix
+          cat >/etc/nix/nix.conf <<'EOF'
+          build-users-group =
+          experimental-features = nix-command
+          substituters =
+          EOF
+
+      - name: Install Nix
+        run: |
+          "$RUNNER_TEMP/nix/install" --no-daemon --no-channel-add --no-modify-profile
+          echo "$HOME/.nix-profile/bin" >>"$GITHUB_PATH"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
