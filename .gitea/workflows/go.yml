@@ -4,18 +4,27 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
-    name: test (${{ matrix.ceph-release }})
+    name: test (${{ matrix.ceph-release }}, linux/${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
+        ceph-release:
+          - squid
+          - tentacle
+        arch:
+          - amd64
+          - arm64
         include:
           - ceph-release: squid
-            runner: ubuntu-24.04
+            ubuntu: "24.04"
           - ceph-release: tentacle
-            runner: ubuntu-26.04
-    runs-on: ${{ matrix.runner }}
+            ubuntu: "26.04"
+    runs-on: ubuntu-${{ matrix.ubuntu }}-${{ matrix.arch }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
