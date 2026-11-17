@@ -191,21 +191,11 @@ func cmdCreatePool(ts *testscript.TestScript, neg bool, args []string) {
 
 	poolName := fmt.Sprintf("test-%x", mathrand.Uint64())
 
-	const maxAttempts = 3
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		createArgs := []string{"--conf", confPath, "osd", "pool", "create", poolName, "8"}
-		if poolType == "erasure" {
-			createArgs = append(createArgs, "8", "erasure", testECProfileName, testECCrushRuleName)
-		}
-		output, err := exec.CommandContext(ctx, "ceph", createArgs...).CombinedOutput()
-		if exec.CommandContext(ctx, "ceph", "--conf", confPath, "osd", "pool", "get", poolName, "size").Run() == nil {
-			break
-		}
-		if attempt == maxAttempts {
-			ts.Fatalf("failed to create %s pool after %d attempts: %v\noutput: %s", poolType, maxAttempts, err, output)
-		}
-		time.Sleep(1 * time.Second)
+	createArgs := []string{"osd", "pool", "create", poolName, "8"}
+	if poolType == "erasure" {
+		createArgs = append(createArgs, "8", "erasure", testECProfileName, testECCrushRuleName)
 	}
+	ts.Check(runCeph(ctx, confPath, createArgs...))
 
 	ts.Setenv("NIX_RADOS_CACHE_POOL", poolName)
 	ts.Defer(func() {
