@@ -72,4 +72,4 @@ jobs:
       - name: Test
         timeout-minutes: 25
         run: |
-          go test -timeout 20m
+          go test -cover -timeout 20m
