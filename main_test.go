@@ -196,6 +196,8 @@ func cmdCreatePool(ts *testscript.TestScript, neg bool, args []string) {
 		createArgs = append(createArgs, "8", "erasure", testECProfileName, testECCrushRuleName)
 	}
 	ts.Check(runCeph(ctx, confPath, createArgs...))
+	// Listing visits every placement group, so it returns once the whole pool has peered.
+	ts.Check(exec.CommandContext(ctx, "rados", "--conf", confPath, "--pool", poolName, "ls").Run())
 
 	ts.Setenv("NIX_RADOS_CACHE_POOL", poolName)
 	ts.Defer(func() {
