@@ -114,6 +114,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "--max-uploads must be positive")
 		os.Exit(1)
 	}
+	if *ioTimeout < time.Second || *ioTimeout%time.Second != 0 {
+		fmt.Fprintln(os.Stderr, "--io-timeout must be a whole number of seconds")
+		os.Exit(1)
+	}
 	if chunkSize != 0 && (chunkSize < 4096 || chunkSize > 512<<20 || chunkSize&(chunkSize-1) != 0) {
 		fmt.Fprintln(os.Stderr, "--chunk-size must be a power of two between 4K and 512M")
 		os.Exit(1)

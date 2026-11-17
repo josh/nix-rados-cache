@@ -22,6 +22,12 @@ stderr 'stripe-size'
 ! exec nix-rados-cache --pool no-such-pool --max-uploads 0
 stderr 'max-uploads'
 
+! exec nix-rados-cache --pool no-such-pool --io-timeout 500ms
+stderr 'io-timeout'
+
+! exec nix-rados-cache --pool no-such-pool --io-timeout 1500ms
+stderr 'io-timeout'
+
 ! exec nix-rados-cache --pool no-such-pool --chunk-size 3M
 stderr 'chunk-size'
 
