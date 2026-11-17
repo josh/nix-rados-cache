@@ -517,7 +517,7 @@ func setupCephDir(ctx context.Context, tmpDir string, out io.Writer) (string, er
 	monmapPath := filepath.Join(tmpDir, "monmap")
 	steps := [][]string{
 		{"monmaptool", "--conf", confPath, monmapPath, "--create", "--fsid", fsid},
-		{"monmaptool", "--conf", confPath, monmapPath, "--add", "mon1", "v1:" + monAddr},
+		{"monmaptool", "--conf", confPath, monmapPath, "--add", "mon1", "v2:" + monAddr},
 		{"ceph-mon", "--conf", confPath, "--mkfs", "--id", "mon1", "--monmap", monmapPath},
 	}
 	for _, step := range steps {
@@ -536,7 +536,7 @@ func setupCephDir(ctx context.Context, tmpDir string, out io.Writer) (string, er
 
 const cephConfTemplate = `[global]
 fsid = %[1]s
-mon_host = v1:%[2]s/0
+mon_host = v2:%[2]s/0
 public_network = 127.0.0.1/32
 auth_cluster_required = none
 auth_service_required = none
