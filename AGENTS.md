@@ -2,7 +2,7 @@
 
 Tests are end-to-end testscript scripts in `testdata/`. Do not add Go unit tests; new behavior gets covered by a txtar script exercising the real server over HTTP.
 
-Requires `ceph-mon`, `ceph-osd`, `librados-dev`, and `nix`, either run as root against the local store, as CI does, or with a running daemon. The harness starts a throwaway Ceph cluster. `nix-ca-derivations.txtar` is skipped unless `ca-derivations` can be enabled: root always can, a daemon needs `extra-experimental-features = ca-derivations` in `/etc/nix/nix.custom.conf` and a restart.
+Requires `ceph-mon`, `ceph-osd`, `librados-dev`, and `nix`, either run as root against the local store, as CI does, or with a running daemon. The harness starts a throwaway Ceph cluster. `nix-ca-derivations.txtar` is skipped unless the Nix configuration enables `ca-derivations` (`extra-experimental-features = ca-derivations` in `/etc/nix/nix.custom.conf`, then restart `nix-daemon`).
 
 ```sh
 go test -cover -timeout 20m .

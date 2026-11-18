@@ -67,7 +67,7 @@ func TestScript(t *testing.T) {
 	}
 
 	caDerivations := true
-	probe := exec.CommandContext(ctx, "nix", "build", "--dry-run", "--no-link", "--extra-experimental-features", "ca-derivations", "--impure", "--expr", caExpr)
+	probe := exec.CommandContext(ctx, "nix", "build", "--dry-run", "--no-link", "--impure", "--expr", caExpr)
 	if output, err := probe.CombinedOutput(); err != nil {
 		if !strings.Contains(string(output), "experimental Nix feature 'ca-derivations' is disabled") {
 			t.Fatalf("ca-derivations probe: %v\n%s", err, output)

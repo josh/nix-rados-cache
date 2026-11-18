@@ -52,7 +52,7 @@ jobs:
           mkdir -p /etc/nix
           cat >/etc/nix/nix.conf <<'EOF'
           build-users-group =
-          experimental-features = nix-command
+          experimental-features = nix-command ca-derivations
           substituters =
           EOF
 

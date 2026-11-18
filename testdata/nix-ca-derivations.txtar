@@ -1,4 +1,4 @@
-[!ca-derivations] skip 'daemon lacks ca-derivations'
+[!ca-derivations] skip 'ca-derivations is not enabled'
 
 tail-logs
 create-pool
