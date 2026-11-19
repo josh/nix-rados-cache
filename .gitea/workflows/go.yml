@@ -37,8 +37,8 @@ jobs:
       - name: Download Nix
         run: |
           case "$(uname -m)" in
-            x86_64) sha256=b12ab64a291e41846b9da37b7f56eafa7683deaa267bafb2ed43440ab2f45f13 ;;
-            aarch64) sha256=1f177b572baadf8c09750028f047fe943a3615a34f3e4a43927367a1e0120801 ;;
+            x86_64) sha256=c4d1aed088f62aa729823cffa3269e880de6ce6102fecb8909f2821eedb2f2eb ;;
+            aarch64) sha256=ee696971de946d311699f6dd639cccc8c6734aec9a061b8e205de0ce6515e5ae ;;
           esac
           cd "$RUNNER_TEMP"
           curl --fail --location --retry 5 --retry-all-errors --output nix.tar.xz "https://releases.nixos.org/nix/nix-$NIX_VERSION/nix-$NIX_VERSION-$(uname -m)-linux.tar.xz"
@@ -47,7 +47,7 @@ jobs:
           tar --extract --xz --file nix.tar.xz --directory nix --strip-components 1
         env:
           # renovate: datasource=github-tags depName=NixOS/nix
-          NIX_VERSION: "2.35.6"
+          NIX_VERSION: "2.36.0"
 
       - name: Configure Nix
         run: |
